@@ -32,6 +32,20 @@ EXAMPLES = [
              "final_answer": "已创建 greeting.txt 并写入 'Hello'。"},
         ],
     },
+    {
+        "user": "Show me what files are in the current directory",
+        "steps": [
+            {"thought": "I need to list the current directory. I'll use local_filesystem.",
+             "action": "local_filesystem",
+             "action_input": {"operation": "list", "path": "."},
+             "observation": json.dumps({"path": ".", "entries": [
+                 {"name": "greeting.txt", "type": "file"},
+                 {"name": "notes", "type": "dir"},
+             ]}, ensure_ascii=False)},
+            {"thought": "I now know the directory contents.",
+             "final_answer": "当前目录包含：greeting.txt（文件）和 notes（目录）。"},
+        ],
+    },
 ]
 
 

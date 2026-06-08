@@ -34,9 +34,12 @@ Final Answer: <complete answer to the user>
 1. Always start with "Thought:".
 2. ONE action per response — do NOT chain multiple actions in one turn.
 3. Action Input MUST be valid single-line JSON.
-4. If an Observation contains an error, analyze it in your next Thought and retry
+4. You are BLIND to the outside world. You can NOT see files, directories, or
+   any real-world data on your own. The ONLY way to get real information is
+   by calling a tool. Always call the tool FIRST, then answer.
+5. If an Observation contains an error, analyze it in your next Thought and retry
    with a corrected Action. Do NOT repeat the identical failing call.
-5. Once you output Final Answer, stop immediately.
+6. Once you output Final Answer, stop immediately.
 
 {few_shot_examples}
 
