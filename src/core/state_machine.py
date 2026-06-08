@@ -13,11 +13,11 @@ class AgentState(Enum):
 
 
 _VALID = {
-    AgentState.IDLE:      {AgentState.THINKING},
+    AgentState.IDLE:      {AgentState.THINKING, AgentState.ERROR},
     AgentState.THINKING:  {AgentState.PARSING, AgentState.ERROR},
-    AgentState.PARSING:   {AgentState.ACTING, AgentState.FINISHED, AgentState.OBSERVING},
-    AgentState.ACTING:    {AgentState.OBSERVING},
-    AgentState.OBSERVING: {AgentState.THINKING, AgentState.FINISHED},
+    AgentState.PARSING:   {AgentState.ACTING, AgentState.FINISHED, AgentState.OBSERVING, AgentState.ERROR},
+    AgentState.ACTING:    {AgentState.OBSERVING, AgentState.ERROR},
+    AgentState.OBSERVING: {AgentState.THINKING, AgentState.FINISHED, AgentState.ERROR},
     AgentState.FINISHED:  set(),
     AgentState.ERROR:     set(),
 }

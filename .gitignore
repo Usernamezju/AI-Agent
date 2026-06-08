@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Environment (contains API keys!)
+.env
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Sandbox (runtime file I/O)
+sandbox/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Experiments (runtime logs)
+experiments/logs/*.log
+
+# OS
+.DS_Store
+Thumbs.db

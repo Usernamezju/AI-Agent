@@ -1,4 +1,5 @@
 """ReAct Agent — main execution loop tying together llm, tools, parser, prompts, and memory."""
+from typing import Generator
 from config.settings import settings
 from src.llm import create_llm_client
 from src.tools import register_all_tools, tool_registry
@@ -22,7 +23,16 @@ class Agent:
 
     # ------------------------------------------------------------------
     def run(self, user_query: str) -> str:
-        """Execute the ReAct loop for *user_query* and return the final answer."""
+        """Blocking ReAct loop — returns final answer."""
+        result = None
+        for step in self.run_stream(user_query):
+            if step["type"] == "finished":
+                result = step["answer"]
+        return result or ""
+
+    # ------------------------------------------------------------------
+    def run_stream(self, user_query: str) -> Generator[dict, None, None]:
+        """Generator version — yields dicts after each step for real-time UI updates."""
         self._sm.reset()
         self._mq.clear()
         self._keeper.set(user_query)
@@ -47,20 +57,26 @@ class Agent:
             # Finished?
             if parsed.is_finished:
                 self._sm.transition(AgentState.FINISHED)
-                return parsed.final_answer or ""
+                yield {"type": "finished", "answer": parsed.final_answer or "",
+                       "round": self._iterations, "thought": parsed.thought, "raw": raw}
+                return
 
-            # Parse error → feedback loop (Self-Correction)
+            # Parse error → feedback loop
             parse_err = describe_parse_error(parsed.action_input)
             if parse_err:
                 self._sm.transition(AgentState.OBSERVING)
                 obs = format_parse_error(parsed.raw_text)
                 self._mq.add_pair(raw, obs)
+                yield {"type": "parse_error", "round": self._iterations,
+                       "thought": parsed.thought, "error": parse_err, "raw": raw}
                 continue
 
             # No action?
             if not parsed.has_action:
                 self._sm.transition(AgentState.ERROR)
-                return "Error: model did not output a valid Action or Final Answer."
+                yield {"type": "error", "round": self._iterations,
+                       "message": "Model did not output a valid Action or Final Answer."}
+                return
 
             # --- ACTING ---
             self._sm.transition(AgentState.ACTING)
@@ -70,12 +86,16 @@ class Agent:
             self._sm.transition(AgentState.OBSERVING)
             obs = format_observation(result)
             self._mq.add_pair(raw, obs)
+            yield {"type": "step", "round": self._iterations,
+                   "thought": parsed.thought, "action": parsed.action,
+                   "action_input": parsed.action_input, "observation": result, "raw": raw}
 
-        # Max iterations reached
+        # Max iterations
         if not self._sm.is_terminal:
             self._sm.transition(AgentState.ERROR)
-            return f"Error: exceeded max iterations ({settings.MAX_ITERATIONS})."
-        return ""
+            yield {"type": "error", "round": self._iterations,
+                   "message": f"Exceeded max iterations ({settings.MAX_ITERATIONS})."}
+            return
 
     # ------------------------------------------------------------------
     @property
