@@ -7,7 +7,6 @@ from .deepseek_client import DeepSeekClient
 
 
 def create_llm_client(provider: str | None = None) -> BaseLLMClient:
-    """Return a configured LLM client for the given provider (or the default)."""
     provider = provider or settings.DEFAULT_PROVIDER
     cfg = settings.get_llm_config(provider)
 

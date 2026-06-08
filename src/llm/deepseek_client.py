@@ -4,7 +4,7 @@ DeepSeek API client — OpenAI-compatible protocol.
 from typing import Generator
 from openai import OpenAI
 
-from .base import BaseLLMClient, DEFAULT_TEMPERATURE, DEFAULT_MAX_TOKENS
+from .base import BaseLLMClient
 
 
 class DeepSeekClient(BaseLLMClient):
@@ -18,8 +18,8 @@ class DeepSeekClient(BaseLLMClient):
     def chat(
         self,
         messages: list[dict[str, str]],
-        temperature: float = DEFAULT_TEMPERATURE,
-        max_tokens: int = DEFAULT_MAX_TOKENS,
+        temperature: float,
+        max_tokens: int,
         stop: list[str] | None = None,
     ) -> str:
         resp = self._client.chat.completions.create(
@@ -35,8 +35,8 @@ class DeepSeekClient(BaseLLMClient):
     def stream_chat(
         self,
         messages: list[dict[str, str]],
-        temperature: float = DEFAULT_TEMPERATURE,
-        max_tokens: int = DEFAULT_MAX_TOKENS,
+        temperature: float,
+        max_tokens: int,
         stop: list[str] | None = None,
     ) -> Generator[str, None, None]:
         stream = self._client.chat.completions.create(
