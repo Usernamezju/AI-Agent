@@ -475,6 +475,18 @@ if query:
                 final = next((s["message"] for s in steps if s["type"] == "error"), "No result.")
             placeholder.markdown(final)
 
+            # Render any visualizations generated during this run
+            viz_files = [s["visualization"] for s in steps if s.get("visualization")]
+            if viz_files:
+                from config.settings import settings
+                from pathlib import Path
+                for vf in viz_files:
+                    viz_path = Path(settings.SANDBOX_ROOT) / vf
+                    if viz_path.exists():
+                        st.components.v1.html(
+                            viz_path.read_text(encoding="utf-8"),
+                            height=420, scrolling=False)
+
         st.session_state.messages.append({"role": "assistant", "content": final})
 
     st.rerun()

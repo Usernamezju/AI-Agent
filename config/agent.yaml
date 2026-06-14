@@ -1,0 +1,43 @@
+# =============================================================================
+# Agent Configuration — core ReAct loop, memory, and conversation parameters
+# =============================================================================
+
+# ---- ReAct loop ----
+react:
+  max_iterations: 15              # max reasoning rounds per query
+  sliding_window_size: 10         # recent rounds kept in context window
+  max_context_tokens: 8000        # context token budget before truncation
+
+# ---- Conversation history compression ----
+conversation_history:
+  token_budget_ratio: 0.25        # fraction of max_context_tokens for conv history
+  chars_per_token_estimate: 3     # conservative: 3 chars ≈ 1 token (CJK + EN)
+  max_compression_rounds: 5       # max recent turns kept verbatim (min 1)
+  oldest_fraction_to_compress: 0.5 # fraction of oldest turns compressed at once
+  compression_summary_max_chars: 300
+
+# ---- Instruction keeper ----
+instruction_keeper:
+  max_task_length: 200            # truncate task reminder beyond this (chars)
+
+# ---- Memory extraction ----
+memory_extraction:
+  max_fact_chars: 50              # max length per extracted fact
+  dedup_interval: 5               # run LLM dedup every N extractions
+  max_facts_in_prompt: 20         # cap facts injected into system prompt
+  fact_id_length: 12              # hex chars for fact UUID
+  similar_fact_min_chars: 3       # min shared chars to consider two facts similar
+
+# ---- Long-term memory storage ----
+long_term_memory:
+  file_path: memory/long_term.json # relative to project root
+
+# ---- System prompt rules ----
+system_prompt:
+  visualization_rule: true         # include rule 7 (visualize before Final Answer)
+  debate_rule: true                # include rule 8 (perspective_debate for controversies)
+
+# ---- Error messages ----
+errors:
+  no_valid_action: "Model did not output a valid Action or Final Answer."
+  max_iterations_exceeded: "Exceeded max iterations ({max})."

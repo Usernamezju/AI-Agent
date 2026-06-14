@@ -9,17 +9,39 @@ def render_round(step: dict) -> None:
     t = step["type"]
 
     if t == "step":
-        with st.expander(f"Round {r} — {step.get('action', '?')}", expanded=(r <= 2)):
+        action = step.get("action", "?")
+        with st.expander(f"Round {r} — {action}", expanded=(r <= 2)):
             st.markdown(f"**🧠 Thought:** {step['thought']}")
-            st.markdown(f"**🔧 Action:** `{step['action']}`")
+            st.markdown(f"**🔧 Action:** `{action}`")
             try:
                 ai_str = json.dumps(step.get("action_input", {}), ensure_ascii=False, indent=2)
             except Exception:
                 ai_str = str(step.get("action_input", ""))
             st.code(ai_str, language="json")
+
             obs = step.get("observation", "")
-            st.markdown(f"**👁 Observation:**")
-            st.text(obs[:2000])
+
+            # Specialized rendering for debate
+            if action == "perspective_debate":
+                try:
+                    data = json.loads(obs)
+                    for rd in data.get("debate", []):
+                        st.markdown(f"**Round {rd['round']}**")
+                        col_pro, col_con = st.columns(2)
+                        with col_pro:
+                            st.markdown(f"🟢 **正方**：{rd['pro']['stance']}")
+                            st.info(rd['pro']['arguments'])
+                        with col_con:
+                            st.markdown(f"🔴 **反方**：{rd['con']['stance']}")
+                            st.error(rd['con']['arguments'])
+                    if data.get("instruction"):
+                        st.caption(data["instruction"])
+                except Exception:
+                    st.markdown("**👁 Observation:**")
+                    st.text(obs[:2000])
+            else:
+                st.markdown("**👁 Observation:**")
+                st.text(obs[:2000])
 
     elif t == "parse_error":
         with st.expander(f"Round {r} — ⚠ Parse Error", expanded=True):

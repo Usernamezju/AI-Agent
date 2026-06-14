@@ -1,0 +1,117 @@
+# =============================================================================
+# Tool Configuration — per-tool parameters, limits, and extensions
+# =============================================================================
+
+# ---- sandbox ----
+sandbox:
+  root_dir: sandbox                # relative to project root
+
+# ---- calculator ----
+calculator:
+  # Whitelist of allowed AST node types
+  allowed_nodes:
+    - Expression
+    - BinOp
+    - UnaryOp
+    - Constant
+    - Num          # legacy Python <3.8
+    - Name
+    - Load
+    - Add
+    - Sub
+    - Mult
+    - Div
+  # Whitelist of allowed function names
+  allowed_functions:
+    - abs
+    - round
+    - sqrt
+    - pow
+
+# ---- wikipedia_search ----
+wikipedia:
+  language: zh
+  user_agent: "AI-Agent-Framework/1.0"
+  request_timeout_sec: 15
+  max_extract_chars: 1200
+
+# ---- code_interpreter ----
+code_interpreter:
+  default_timeout_sec: 15
+  max_timeout_sec: 30
+  max_stdout_chars: 3000
+  max_stderr_chars: 500
+  # stderr line prefixes to filter out (non-actionable noise)
+  stderr_filter_prefixes:
+    - DeprecationWarning
+    - Warning
+
+# ---- file_extractor ----
+file_extractor:
+  text_extensions:
+    - .txt
+    - .md
+    - .py
+    - .js
+    - .ts
+    - .json
+    - .csv
+    - .yaml
+    - .yml
+    - .xml
+    - .html
+    - .log
+    - .rst
+  image_extensions:
+    - .jpg
+    - .jpeg
+    - .png
+    - .webp
+    - .gif
+    - .bmp
+  max_text_chars: 50000             # truncate text files beyond this
+  max_pdf_chars: 50000              # truncate PDF text beyond this
+
+# ---- visualizer ----
+visualizer:
+  chart_js_cdn: "https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"
+  colors:
+    - "rgba(99,102,241,0.8)"     # purple
+    - "rgba(16,185,129,0.8)"     # green
+    - "rgba(245,158,11,0.8)"     # orange
+    - "rgba(239,68,68,0.8)"      # red
+    - "rgba(59,130,246,0.8)"     # blue
+    - "rgba(236,72,153,0.8)"     # pink
+    - "rgba(20,184,166,0.8)"     # cyan
+    - "rgba(168,85,247,0.8)"     # purple2
+  chart:
+    border_width: 2
+    title_font_size: 16
+    legend_position: bottom
+    line_tension: 0.3
+    container_height: "100vh"
+    canvas_max_width: "100%"
+
+# ---- debate ----
+debate:
+  default_rounds: 1
+  max_rounds: 2
+  max_arguments: 3                # arguments per debater
+  max_argument_chars: 60          # max chars per argument
+
+# ---- multi_agent ----
+multi_agent:
+  max_workers: 3                  # ThreadPoolExecutor max workers
+  planner_temperature: 0.2
+  synthesis_temperature: 0.5
+
+# ---- tool descriptions (UI) ----
+tool_list_display:
+  - calculator
+  - wikipedia_search
+  - local_filesystem
+  - code_interpreter
+  - visualize
+  - memory_store
+  - memory_recall
+  - perspective_debate

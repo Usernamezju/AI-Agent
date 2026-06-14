@@ -1,0 +1,67 @@
+# =============================================================================
+# LLM Configuration — model names, endpoints, and per-use-case parameters
+# =============================================================================
+
+# Default provider: "deepseek" | "qwen"
+default_provider: deepseek
+
+# ---- DeepSeek ----
+deepseek:
+  base_url: "https://api.deepseek.com"
+  model: deepseek-chat
+
+# ---- Qwen (text) ----
+qwen:
+  base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+  model: qwen-plus
+
+# ---- Qwen-VL (vision) ----
+qwen_vision:
+  model: qwen-vl-plus
+
+# ---- Global generation defaults ----
+generation:
+  temperature: 0.7
+  max_tokens: 4096
+
+# ---- Per-use-case overrides (temperature, max_tokens) ----
+use_cases:
+  # ReAct main loop (already uses global defaults above, listed for reference)
+  react_loop:
+    temperature: 0.7
+    max_tokens: 4096
+
+  # Planner: task decomposition
+  planning:
+    temperature: 0.2
+    max_tokens: 2048
+
+  # Orchestrator: synthesis of multi-agent results
+  synthesis:
+    temperature: 0.5
+    max_tokens: 1024
+
+  # Memory extraction
+  memory_extraction:
+    temperature: 0.1
+    max_tokens: 600
+
+  # Memory compression (conversation history)
+  memory_compression:
+    temperature: 0.3
+    max_tokens: 400
+
+  # Debate generation
+  debate:
+    temperature: 0.8
+    max_tokens: 3000
+
+  # AI re-ranking (search)
+  rerank:
+    temperature: 0
+    max_tokens: 300
+
+  # Image description (Qwen-VL)
+  image_description:
+    temperature: 0.3
+    max_tokens: 1000

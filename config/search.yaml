@@ -1,0 +1,182 @@
+# =============================================================================
+# Search Engine Configuration — BM25, tokenizer, AI re-ranker
+# =============================================================================
+
+# ---- Tokenizer ----
+tokenizer:
+  # Chinese character Unicode range
+  cjk_range_start: 0x4E00         # 一
+  cjk_range_end: 0x9FFF           # 鿿
+  # English word minimum length
+  min_english_word_length: 2
+  # Stopwords (Chinese + English)
+  stopwords:
+    - 的
+    - 了
+    - 在
+    - 是
+    - 我
+    - 有
+    - 和
+    - 就
+    - 不
+    - 人
+    - 都
+    - 一
+    - 一个
+    - 上
+    - 也
+    - 很
+    - 到
+    - 说
+    - 要
+    - 去
+    - 你
+    - 会
+    - 着
+    - 没有
+    - 看
+    - 好
+    - 自己
+    - 这
+    - 那
+    - 他
+    - 她
+    - 它
+    - 们
+    - 对
+    - 用
+    - 做
+    - 来
+    - 能
+    - 可以
+    - 还
+    - 但
+    - 与
+    - 或
+    - 被
+    - 让
+    - 从
+    - 把
+    - 给
+    - 向
+    - 以
+    - 及
+    - 没
+    - 出
+    - 如
+    - 如果
+    - 所以
+    - 因为
+    - 然后
+    - 只是
+    - 怎么
+    - 什么
+    - 哪里
+    - 哪个
+    - 怎样
+    - 多少
+    - 吗
+    - 呢
+    - 吧
+    - a
+    - an
+    - the
+    - is
+    - are
+    - was
+    - were
+    - be
+    - been
+    - being
+    - have
+    - has
+    - had
+    - do
+    - does
+    - did
+    - will
+    - would
+    - could
+    - should
+    - may
+    - might
+    - can
+    - shall
+    - i
+    - you
+    - he
+    - she
+    - it
+    - we
+    - they
+    - me
+    - him
+    - her
+    - us
+    - them
+    - my
+    - your
+    - his
+    - its
+    - our
+    - their
+    - this
+    - that
+    - these
+    - those
+    - to
+    - of
+    - in
+    - for
+    - on
+    - with
+    - at
+    - by
+    - from
+    - as
+    - into
+    - through
+    - during
+    - before
+    - after
+    - above
+    - below
+    - between
+    - and
+    - but
+    - or
+    - not
+    - no
+    - so
+    - if
+    - then
+    - than
+    - too
+    - very
+    - just
+    - about
+    - also
+
+# ---- BM25 ----
+bm25:
+  k1: 1.5                         # term saturation parameter
+  b: 0.75                         # length normalization parameter
+  default_top_k: 5                # default result count
+  score_precision: 4              # decimal places for score rounding
+
+# ---- Snippet generation ----
+snippet:
+  context_window_before: 60       # chars before first match
+  context_window_after: 60        # chars after first match
+  fallback_length: 120            # snippet length when no query match found
+
+# ---- AI re-ranker ----
+reranker:
+  candidate_pool_max: 10          # max BM25 candidates sent to LLM
+  default_top_k: 3                # results after re-ranking
+
+# ---- SearchEngine facade ----
+search:
+  default_top_k: 5
+  bm25_multiplier: 2              # BM25 retrieves top_k * multiplier for re-ranker

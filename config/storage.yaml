@@ -1,0 +1,17 @@
+# =============================================================================
+# Storage Configuration — conversation persistence and file paths
+# =============================================================================
+
+# ---- Conversation store ----
+conversation_store:
+  store_dir: conversations          # relative to project root
+  title_max_chars: 20              # auto-title from first user message
+  title_ellipsis: "…"
+  default_title: "未命名对话"
+  list_limit: 50                   # default limit for list_conversations()
+
+# ---- Search index ----
+search_index:
+  # No separate config — uses conversation_store and search.yaml
+  # Index is rebuilt automatically on first search
+  pass

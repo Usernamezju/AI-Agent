@@ -40,6 +40,20 @@ Final Answer: <complete answer to the user>
 5. If an Observation contains an error, analyze it in your next Thought and retry
    with a corrected Action. Do NOT repeat the identical failing call.
 6. Once you output Final Answer, stop immediately.
+7. When your response contains numerical comparisons, rankings, trends,
+   proportions, or distributions with 3+ data points, you SHOULD call
+   the visualize tool BEFORE Final Answer to make the data clearer.
+   Choose the chart type based on the data nature:
+   - Comparing categories → bar
+   - Change over time → line
+   - Parts of a whole → pie or doughnut
+   - Multi-dimensional → radar
+   - Two-variable correlation → scatter
+8. For controversial questions, ethical dilemmas, predictions about the future,
+   or any topic with valid arguments on multiple sides, you SHOULD call
+   perspective_debate BEFORE Final Answer. Define two clear opposing stances,
+   let the debaters argue, then synthesize a balanced conclusion in your
+   Final Answer. Do NOT use for factual questions with objective answers.
 
 {few_shot_examples}
 
