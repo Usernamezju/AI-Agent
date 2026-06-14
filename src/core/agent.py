@@ -12,6 +12,7 @@ from src.prompts.prompt_manager import PromptManager
 from src.memory import (MessageQueue, SlidingWindow, InstructionKeeper,
                          ConversationHistory, LongTermMemory, MemoryExtractor)
 from src.memory.reflection_store import ReflectionStore
+from src.memory.directory_memory import DirectoryMemory
 from src.storage.conversation_store import ConversationStore
 from src.storage.search_engine import SearchEngine
 from .parser import parse_response, describe_parse_error
@@ -42,6 +43,9 @@ class Agent:
         self._pm.update_tools(tool_registry.generate_descriptions())
         # Reflexion store
         self._reflection_store = ReflectionStore()
+        # Directory-scoped memory
+        self._dir_memory = DirectoryMemory()
+        self._accessed_dirs: set[str] = set()   # dirs touched in current run
         # Conversation persistence + search (skipped for sub-agents)
         self._is_sub_agent = is_sub_agent
         if not is_sub_agent:
@@ -69,6 +73,7 @@ class Agent:
         self._mq.clear()
         self._keeper.set(user_query)
         self._iterations = 0
+        self._accessed_dirs = set()
 
         # Ensure a conversation file exists and record the user query
         if self._store is not None:
@@ -105,6 +110,11 @@ class Agent:
             ltm_block = self._ltm.format_for_prompt()
             if ltm_block:
                 messages[0]["content"] += ltm_block
+            # Inject directory memories for all dirs accessed so far this run
+            for dpath in self._accessed_dirs:
+                hint = self._dir_memory.format_hint(dpath)
+                if hint:
+                    messages.insert(1, {"role": "system", "content": hint})
             # Inject multi-turn conversation history (session memory)
             conv_ctx = self._conv.get_context_prompt()
             if conv_ctx:
@@ -143,6 +153,13 @@ class Agent:
                     args=(user_query, all_steps, final_answer, True),
                     daemon=True,
                 ).start()
+                # Update directory memories asynchronously
+                if self._accessed_dirs:
+                    threading.Thread(
+                        target=self._update_dir_memories,
+                        args=(user_query, all_steps, set(self._accessed_dirs)),
+                        daemon=True,
+                    ).start()
                 yield {"type": "finished", "answer": final_answer,
                        "round": self._iterations, "thought": parsed.thought, "raw": raw}
                 return
@@ -180,6 +197,21 @@ class Agent:
             self._sm.transition(AgentState.OBSERVING)
             obs = format_observation(result)
             self._mq.add_pair(raw, obs)
+            # Track directory accessed by filesystem / code_interpreter tools
+            if parsed.action in ("local_filesystem", "code_interpreter"):
+                ai = parsed.action_input or {}
+                raw_path = ai.get("path", ".")
+                try:
+                    from src.tools import tool_registry as _tr
+                    fs = _tr.get("local_filesystem")
+                    root = getattr(fs, "_root", None)
+                    if root:
+                        from pathlib import Path as _P
+                        resolved = (_P(str(root)) / raw_path.lstrip("/\\")).resolve()
+                        dir_path = str(resolved if resolved.is_dir() else resolved.parent)
+                        self._accessed_dirs.add(dir_path)
+                except Exception:
+                    pass
             # Extract visualization file name if present
             viz_file = None
             if parsed.action == "visualize":
@@ -263,6 +295,45 @@ class Agent:
             })
         except Exception:
             pass  # Reflection failure must not affect the main loop
+
+    # ------------------------------------------------------------------
+    def _update_dir_memories(self, task: str, steps: list,
+                              dirs: set[str]) -> None:
+        """Ask LLM to extract/update key facts about each accessed directory."""
+        obs_lines = []
+        for s in steps:
+            if s.get("action") in ("local_filesystem", "code_interpreter"):
+                obs_lines.append(f"Action: {s.get('action')} {s.get('action_input', {})}")
+                obs_lines.append(f"Observation: {str(s.get('observation', ''))[:400]}")
+
+        if not obs_lines:
+            return
+
+        obs_text = "\n".join(obs_lines)
+
+        for dir_path in dirs:
+            try:
+                existing = self._dir_memory.get(dir_path) or "（暂无记录）"
+                prompt = (
+                    f"你是一个目录记忆管理器。\n"
+                    f"目录路径：{dir_path}\n\n"
+                    f"用户任务：{task}\n\n"
+                    f"本次对该目录的操作记录：\n{obs_text}\n\n"
+                    f"该目录已有记忆：\n{existing}\n\n"
+                    "请根据本次操作，更新目录记忆。记忆应包含：\n"
+                    "- 该目录的用途和主要内容\n"
+                    "- 重要文件及其作用\n"
+                    "- 用户在此目录做过的关键操作\n"
+                    "- 任何值得下次记住的注意事项\n\n"
+                    "要求：简洁（不超过 200 字），合并已有记忆与新发现，去除过时信息。\n"
+                    "只输出记忆文字，不要其他内容。"
+                )
+                messages = [{"role": "user", "content": prompt}]
+                updated = self._llm.chat(messages, temperature=0.3, max_tokens=400)
+                if updated.strip():
+                    self._dir_memory.save(dir_path, updated.strip())
+            except Exception:
+                pass
 
     # ------------------------------------------------------------------
     def reset_conversation(self) -> None:

@@ -7,3 +7,4 @@ from .conversation_history import ConversationHistory
 from .long_term_memory import LongTermMemory
 from .memory_extractor import MemoryExtractor
 from .reflection_store import ReflectionStore
+from .directory_memory import DirectoryMemory

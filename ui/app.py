@@ -2,6 +2,7 @@
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from pathlib import Path
 import streamlit as st
 from src.core import Agent
 from src.multi_agent import Orchestrator
@@ -224,6 +225,94 @@ with st.sidebar:
                             st.rerun()
 
     st.sidebar.divider()
+
+    # ---- Working directory switcher ----
+    from config.settings import settings as _settings
+    from src.tools import tool_registry as _sidebar_tr
+
+    _default_sandbox = str(_settings.SANDBOX_ROOT)
+
+    if "working_dir" not in st.session_state:
+        st.session_state.working_dir = _default_sandbox
+
+    st.sidebar.caption("📂 工作目录")
+
+    _fs_tool = _sidebar_tr.get("local_filesystem")
+    _ci_tool = _sidebar_tr.get("code_interpreter")
+    _current = getattr(_fs_tool, "current_root", st.session_state.working_dir)
+
+    # Show current path + mode badge
+    _is_sandbox = Path(_current).resolve() == Path(_default_sandbox).resolve()
+    _badge = "🔒 沙箱" if _is_sandbox else "📁 自定义"
+    _display = _current if len(_current) <= 36 else "…" + _current[-34:]
+    st.sidebar.markdown(
+        f"<small style='color:#888'>{_badge}：<code>{_display}</code></small>",
+        unsafe_allow_html=True,
+    )
+
+    # --- browse button (native OS dialog via tkinter) ---
+    def _pick_directory() -> str:
+        try:
+            import tkinter as tk
+            from tkinter import filedialog
+            root = tk.Tk()
+            root.withdraw()
+            root.wm_attributes("-topmost", 1)
+            chosen = filedialog.askdirectory(
+                title="选择工作目录",
+                initialdir=_current,
+            )
+            root.destroy()
+            return chosen or ""
+        except Exception:
+            return ""
+
+    _bc1, _bc2, _bc3 = st.sidebar.columns([2, 2, 2])
+    with _bc1:
+        if st.button("📁 浏览", key="wd_browse", use_container_width=True):
+            chosen = _pick_directory()
+            if chosen:
+                _err = _fs_tool.set_root(chosen) if _fs_tool else ""
+                if not _err and _ci_tool:
+                    _err = _ci_tool.set_sandbox(chosen)
+                if _err:
+                    st.sidebar.error(f"切换失败：{_err}")
+                else:
+                    st.session_state.working_dir = chosen
+                    st.rerun()
+    with _bc2:
+        if st.button("✏️ 手输", key="wd_manual_toggle", use_container_width=True):
+            st.session_state["wd_manual"] = not st.session_state.get("wd_manual", False)
+            st.rerun()
+    with _bc3:
+        if st.button("🔒 沙箱", key="wd_reset", use_container_width=True):
+            if _fs_tool:
+                _fs_tool.set_root(_default_sandbox)
+            if _ci_tool:
+                _ci_tool.set_sandbox(_default_sandbox)
+            st.session_state.working_dir = _default_sandbox
+            st.session_state["wd_manual"] = False
+            st.rerun()
+
+    # Manual path input (collapsed by default)
+    if st.session_state.get("wd_manual", False):
+        _new_dir = st.sidebar.text_input(
+            "手动输入路径", value=_current,
+            key="wd_input", label_visibility="collapsed",
+            placeholder="输入绝对路径…",
+        )
+        if st.sidebar.button("确认切换", key="wd_apply", use_container_width=True):
+            _err = _fs_tool.set_root(_new_dir) if _fs_tool else ""
+            if not _err and _ci_tool:
+                _err = _ci_tool.set_sandbox(_new_dir)
+            if _err:
+                st.sidebar.error(f"切换失败：{_err}")
+            else:
+                st.session_state.working_dir = _new_dir
+                st.session_state["wd_manual"] = False
+                st.rerun()
+
+    st.sidebar.divider()
     st.sidebar.caption("📎 上传文件")
     uploaded_file = st.sidebar.file_uploader(
         "上传文件",
@@ -420,6 +509,159 @@ with right:
                     if st.button("取消", key="confirm_clear_no", use_container_width=True):
                         st.session_state["confirm_clear"] = False
                         st.rerun()
+
+    # ==================================================================
+    # Tool library panel
+    # ==================================================================
+    from src.tools import tool_registry as _tr
+    all_tools = _tr.list_all()
+    builtin = [t for t in all_tools if not t["synthesized"]]
+    synthesized = [t for t in all_tools if t["synthesized"]]
+
+    panel_title = "🔧 工具库"
+    if synthesized:
+        panel_title += f"  ✨ +{len(synthesized)} AI 合成"
+
+    with st.expander(panel_title, expanded=bool(synthesized)):
+        def _render_tool_row(t: dict, border_color: str, bg_color: str, badge: str = "") -> None:
+            name = t["name"]
+            rk = f"tool_renaming_{name}"
+            if rk not in st.session_state:
+                st.session_state[rk] = False
+
+            if st.session_state[rk]:
+                # --- rename mode ---
+                new_name = st.text_input(
+                    "新名称", value=name, key=f"tool_rename_input_{name}",
+                    label_visibility="collapsed",
+                )
+                rc1, rc2, _ = st.columns([1, 1, 4])
+                with rc1:
+                    if st.button("保存", key=f"tool_rename_save_{name}",
+                                 use_container_width=True):
+                        new_name = new_name.strip()
+                        if new_name and new_name != name:
+                            if _tr.rename(name, new_name):
+                                st.session_state.agent._pm.update_tools(
+                                    _tr.generate_descriptions())
+                            else:
+                                st.warning(f"名称 '{new_name}' 已存在或无效")
+                        st.session_state[rk] = False
+                        st.rerun()
+                with rc2:
+                    if st.button("取消", key=f"tool_rename_cancel_{name}",
+                                 use_container_width=True):
+                        st.session_state[rk] = False
+                        st.rerun()
+            else:
+                # --- display mode ---
+                col_info, col_edit, col_del = st.columns([8, 1, 1])
+                with col_info:
+                    st.markdown(
+                        f"<div style='padding:6px 8px;margin:4px 0;border-radius:6px;"
+                        f"background:{bg_color};border-left:3px solid {border_color}'>"
+                        f"<b style='color:{border_color}'>{name}</b>{badge}<br>"
+                        f"<small style='color:#aaa'>"
+                        f"{t['description'][:80]}{'…' if len(t['description'])>80 else ''}"
+                        f"</small></div>",
+                        unsafe_allow_html=True,
+                    )
+                with col_edit:
+                    if st.button("✏️", key=f"tool_rename_btn_{name}",
+                                 help=f"重命名 {name}"):
+                        # Close other rename inputs
+                        for other in all_tools:
+                            if other["name"] != name:
+                                st.session_state[f"tool_renaming_{other['name']}"] = False
+                        st.session_state[rk] = True
+                        st.rerun()
+                with col_del:
+                    if st.button("🗑", key=f"del_tool_{name}",
+                                 help=f"移除 {name}"):
+                        _tr.unregister(name)
+                        st.session_state.agent._pm.update_tools(_tr.generate_descriptions())
+                        st.rerun()
+
+        if builtin:
+            st.markdown("<small style='color:#888'>内置工具</small>",
+                        unsafe_allow_html=True)
+            for t in builtin:
+                _render_tool_row(t, border_color="#4a8cf7", bg_color="#1e2a3a")
+
+        if synthesized:
+            st.markdown("<small style='color:#f0a500'>✨ AI 运行时合成工具</small>",
+                        unsafe_allow_html=True)
+            badge = (
+                "<span style='margin-left:6px;font-size:0.7rem;background:#f0a500;"
+                "color:#000;border-radius:3px;padding:1px 5px'>AI 合成</span>"
+            )
+            for t in synthesized:
+                _render_tool_row(t, border_color="#f0a500", bg_color="#2a2010",
+                                 badge=badge)
+
+        if not all_tools:
+            st.caption("暂无工具")
+
+    # ==================================================================
+    # Directory memory panel
+    # ==================================================================
+    dir_memories = st.session_state.agent._dir_memory.list_all()
+    dm_title = f"📂 目录记忆（{len(dir_memories)}）" if dir_memories else "📂 目录记忆"
+    with st.expander(dm_title, expanded=False):
+        if not dir_memories:
+            st.caption("Agent 访问文件目录后，会自动在此生成目录记忆。")
+        else:
+            for entry in dir_memories:
+                dpath = entry["path"]
+                ts = entry["updated_at"][:10] if entry["updated_at"] else ""
+                dm_key = f"dm_editing_{dpath}"
+                if dm_key not in st.session_state:
+                    st.session_state[dm_key] = False
+
+                st.markdown(
+                    f"<small style='color:#888'>📁 <code>{dpath}</code>"
+                    f"{'  ·  ' + ts if ts else ''}</small>",
+                    unsafe_allow_html=True,
+                )
+
+                if st.session_state[dm_key]:
+                    new_mem = st.text_area(
+                        "编辑目录记忆", value=entry["memory"], height=120,
+                        key=f"dm_area_{dpath}", label_visibility="collapsed",
+                    )
+                    dc1, dc2, _ = st.columns([1, 1, 4])
+                    with dc1:
+                        if st.button("保存", key=f"dm_save_{dpath}",
+                                     use_container_width=True):
+                            st.session_state.agent._dir_memory.save(dpath, new_mem.strip())
+                            st.session_state[dm_key] = False
+                            st.rerun()
+                    with dc2:
+                        if st.button("取消", key=f"dm_cancel_{dpath}",
+                                     use_container_width=True):
+                            st.session_state[dm_key] = False
+                            st.rerun()
+                else:
+                    st.markdown(
+                        f"<div style='padding:6px 8px;margin:4px 0 8px 0;border-radius:6px;"
+                        f"background:#1a2a1a;border-left:3px solid #2e7d32;font-size:0.85rem'>"
+                        f"{entry['memory']}</div>",
+                        unsafe_allow_html=True,
+                    )
+                    dc1, dc2, _ = st.columns([1, 1, 5])
+                    with dc1:
+                        if st.button("✏️", key=f"dm_edit_{dpath}",
+                                     help="编辑此目录记忆", use_container_width=True):
+                            for e2 in dir_memories:
+                                st.session_state[f"dm_editing_{e2['path']}"] = False
+                            st.session_state[dm_key] = True
+                            st.rerun()
+                    with dc2:
+                        if st.button("🗑", key=f"dm_del_{dpath}",
+                                     help="删除此目录记忆", use_container_width=True):
+                            st.session_state.agent._dir_memory.delete(dpath)
+                            st.rerun()
+                st.divider()
 
 # =====================================================================
 # Query handling (top-level, after all containers)

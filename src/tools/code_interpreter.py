@@ -53,6 +53,20 @@ class CodeInterpreterTool:
         self._sandbox = Path(sandbox_root).resolve()
         self._sandbox.mkdir(parents=True, exist_ok=True)
 
+    def set_sandbox(self, new_root: str) -> str:
+        """Dynamically change the code execution working directory."""
+        try:
+            p = Path(new_root).expanduser().resolve()
+            p.mkdir(parents=True, exist_ok=True)
+            self._sandbox = p
+            return ""
+        except Exception as exc:
+            return str(exc)
+
+    @property
+    def current_sandbox(self) -> str:
+        return str(self._sandbox)
+
     # ------------------------------------------------------------------
     def run(self, code: str, timeout: int = 15) -> str:
         timeout = min(int(timeout), 30)

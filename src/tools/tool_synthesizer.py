@@ -119,6 +119,7 @@ class ToolSynthesizerTool:
             "run": staticmethod(lambda **kw: captured_fn(**kw)),
         })
         self._registry.register(DynamicTool())
+        self._registry.mark_synthesized(tool_name)
 
         return json.dumps({
             "success": True,
