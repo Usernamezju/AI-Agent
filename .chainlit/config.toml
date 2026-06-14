@@ -1,0 +1,20 @@
+[project]
+name = "AI Agent Framework"
+enable_telemetry = false
+
+[features]
+prompt_playground = false
+multi_modal = false
+
+[UI]
+name = "AI Agent"
+description = "基于 ReAct 范式的 AI Agent，浙江大学人工智能基础实验"
+default_theme = "dark"
+
+[UI.theme.dark]
+primary = "#7C3AED"
+background = "#0F0F0F"
+paper = "#1A1A1A"
+
+[meta]
+generated_by = "1.0.0"

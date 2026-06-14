@@ -93,10 +93,15 @@ Rounds : 2
 ### 4. Web 界面运行
 
 ```bash
+# Chainlit 界面（推荐）
+chainlit run chainlit_app.py --watch
+
+# 原 Streamlit 界面（仍可用）
 streamlit run ui/app.py
 ```
 
-浏览器打开 `http://localhost:8501`，左侧对话面板 + 右侧实时推理轨迹。
+Chainlit 界面：ChatGPT 风格对话，内置流式输出、深色主题、对话历史。
+Streamlit 界面：浏览器打开 `http://localhost:8501`，左侧对话面板 + 右侧实时推理轨迹。
 
 ## 配置项说明
 

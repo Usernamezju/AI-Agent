@@ -75,6 +75,55 @@ class LongTermMemory:
             json.dump({"facts": self._facts}, fh, ensure_ascii=False, indent=2)
         os.replace(tmp, self._path)
 
+    def find_similar_fact(self, content: str) -> str | None:
+        """Return the id of the fact most semantically related to *content*.
+
+        Uses simple word-overlap heuristic.  Returns ``None`` when no existing
+        fact shares enough words.
+        """
+        content_lower = content.lower()
+        best_id: str | None = None
+        best_score = 0
+        for fact in self._facts:
+            fact_lower = fact["content"].lower()
+            # Count shared characters as a simple Jaccard-like proxy
+            shared = len(set(content_lower) & set(fact_lower))
+            if shared > best_score:
+                best_score = shared
+                best_id = fact["id"]
+        # Require at least 3 shared characters to consider it related
+        return best_id if best_score >= 3 else None
+
+    def replace_all_contents(self, new_facts: list[str]) -> None:
+        """Replace the entire fact list with *new_facts*, preserving ids where
+        content is unchanged and assigning new ids to new entries."""
+        old_by_content = {f["content"]: f for f in self._facts}
+        kept: list[dict] = []
+        now = datetime.now(timezone.utc).isoformat()
+        for content in new_facts:
+            if content in old_by_content:
+                kept.append(old_by_content[content])
+            else:
+                kept.append({
+                    "id": uuid.uuid4().hex[:12],
+                    "content": content,
+                    "timestamp": now,
+                })
+        self._facts = kept
+
+    def deduplicate(self, llm_client) -> None:
+        """Use the LLM to merge semantically similar facts in-place.
+
+        Import is deferred to avoid circular dependencies at module load time.
+        """
+        from .memory_extractor import MemoryExtractor
+        if len(self._facts) < 2:
+            return
+        contents = [f["content"] for f in self._facts]
+        merged = MemoryExtractor(llm_client).deduplicate(contents)
+        if merged:
+            self.replace_all_contents(merged)
+
     def clear(self) -> None:
         """Discard all facts and persist."""
         self._facts = []

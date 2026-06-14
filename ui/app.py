@@ -4,6 +4,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import streamlit as st
 from src.core import Agent
+from src.multi_agent import Orchestrator
 from ui.components.thought_tracker import render_trace
 from ui.components.chat_panel import render_message
 from ui.components.tool_visualizer import render_tool_stats
@@ -17,12 +18,219 @@ if os.path.exists(css_path):
         st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
 
 # ---- Session state --------------------------------------------------
-for key, default in [("messages", []), ("trace", []), ("agent", None)]:
+for key, default in [("messages", []), ("trace", []), ("agent", None),
+                       ("orchestrator", None), ("multi_agent_mode", False),
+                       ("ma_tasks", []), ("ma_trace", [])]:
     if key not in st.session_state:
         st.session_state[key] = default
 
 if st.session_state.agent is None:
     st.session_state.agent = Agent()
+if st.session_state.orchestrator is None:
+    st.session_state.orchestrator = Orchestrator()
+
+# Session state for search results
+if "search_results" not in st.session_state:
+    st.session_state.search_results = None
+if "last_uploaded" not in st.session_state:
+    st.session_state.last_uploaded = ""
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# File upload handler
+# ═══════════════════════════════════════════════════════════════════════
+
+
+def _handle_upload(uploaded_file, agent: Agent) -> None:
+    """Save uploaded file to sandbox, extract text/image, and inject a notice."""
+    from pathlib import Path
+    from config.settings import settings
+    from src.tools.file_extractor import extract_text, extract_image_description, IMAGE_EXTENSIONS
+
+    file_key = f"{uploaded_file.name}_{uploaded_file.size}"
+    if st.session_state.last_uploaded == file_key:
+        return
+    st.session_state.last_uploaded = file_key
+
+    sandbox = Path(settings.SANDBOX_ROOT)
+    sandbox.mkdir(parents=True, exist_ok=True)
+    save_path = sandbox / uploaded_file.name
+    save_path.write_bytes(uploaded_file.getvalue())
+
+    suffix = save_path.suffix.lower()
+
+    # ---- image → Qwen-VL description ----
+    if suffix in IMAGE_EXTENSIONS:
+        from src.llm import create_llm_client
+        try:
+            vision_client = create_llm_client("qwen")
+            # Override model to vision-capable one
+            if hasattr(vision_client, "_client"):
+                # Store original model name, swap in vision model
+                pass  # Will be set via internal attribute
+            vision_client.model = settings.QWEN_VISION_MODEL
+            description, img_error = extract_image_description(save_path, vision_client)
+        except Exception:
+            description, img_error = "", "无法创建视觉模型客户端，请检查 QWEN_API_KEY"
+
+        if img_error:
+            notice = (
+                f"[系统通知] 用户上传了图片：{uploaded_file.name}（{uploaded_file.size} 字节）\n"
+                f"文件已保存至 sandbox/{uploaded_file.name}\n"
+                f"图片理解失败：{img_error}"
+            )
+        else:
+            preview = description[:300] + "…" if len(description) > 300 else description
+            notice = (
+                f"[系统通知] 用户上传了图片：{uploaded_file.name}（{uploaded_file.size} 字节）\n"
+                f"文件已保存至 sandbox/{uploaded_file.name}\n"
+                f"图片内容描述（Qwen-VL）：\n```\n{preview}\n```\n"
+                "请基于以上描述回答用户关于此图片的问题。"
+            )
+    else:
+        # ---- text / PDF / other ----
+        text, error = extract_text(save_path)
+        if error:
+            notice = (
+                f"[系统通知] 用户上传了文件：{uploaded_file.name}（{uploaded_file.size} 字节）\n"
+                f"文件已保存至 sandbox/{uploaded_file.name}，但文本提取失败：{error}\n"
+                "如需读取，请使用 local_filesystem 工具。"
+            )
+        else:
+            preview = text[:300] + "…" if len(text) > 300 else text
+            notice = (
+                f"[系统通知] 用户上传了文件：{uploaded_file.name}（{uploaded_file.size} 字节）\n"
+                f"文件已保存至 sandbox/{uploaded_file.name}，内容预览：\n"
+                f"```\n{preview}\n```\n"
+                f"完整内容可用 local_filesystem 工具读取，path 填写 \"{uploaded_file.name}\"。"
+            )
+
+    st.session_state.messages.append({"role": "user", "content": notice})
+    if hasattr(agent, "_conv"):
+        agent._conv.add_turn("[文件上传通知]", notice)
+
+    st.success(f"已上传：{uploaded_file.name}（{uploaded_file.size} 字节）")
+    if suffix in IMAGE_EXTENSIONS:
+        st.info("图片正由视觉模型理解中…")
+    elif 'error' in dir() and error:
+        st.warning(error)
+
+# ═══════════════════════════════════════════════════════════════════════
+# SIDEBAR — Search + Conversation history
+# ═══════════════════════════════════════════════════════════════════════
+with st.sidebar:
+    st.markdown("### 🔍 搜索对话")
+    sq = st.text_input("搜索对话", placeholder="输入关键词…", key="search_query",
+                        label_visibility="collapsed")
+    c1, c2 = st.columns(2)
+    use_ai = c1.checkbox("AI 语义", value=False, key="use_ai_search")
+    if c2.button("搜索", key="search_btn", use_container_width=True):
+        if sq.strip():
+            agent_obj: Agent = st.session_state.agent
+            results = agent_obj._search.search(sq.strip(), use_ai=use_ai)
+            st.session_state.search_results = results
+        else:
+            st.session_state.search_results = None
+
+    # Clear search
+    if st.session_state.search_results is not None:
+        if st.button("✕ 清除搜索", use_container_width=True):
+            st.session_state.search_results = None
+            st.rerun()
+
+    st.divider()
+
+    # New conversation
+    if st.button("🆕 新对话", use_container_width=True):
+        st.session_state.agent.reset_conversation()
+        st.session_state.messages = []
+        st.session_state.trace = []
+        st.session_state.search_results = None
+        st.rerun()
+
+    st.divider()
+
+    agent_obj: Agent = st.session_state.agent
+    results = st.session_state.search_results
+
+    if results is not None:
+        # ---- Search results ----
+        if not results:
+            st.caption("未找到匹配的对话")
+        else:
+            st.caption(f"找到 {len(results)} 条结果")
+            for r in results:
+                # Highlight query tokens in snippet
+                snippet = r.get("snippet", "")
+                for token in sq.strip().split():
+                    snippet = snippet.replace(token, f"**{token}**")
+                label = f"**{r['title'][:18]}** · 相关度 {r['score']:.2f}"
+                if st.button(label, key=f"sr_{r['id']}", use_container_width=True,
+                             help=snippet[:200]):
+                    conv = agent_obj._store.get_conversation(r["id"])
+                    if conv:
+                        st.session_state.messages = conv.get("messages", [])
+                        st.rerun()
+    else:
+        # ---- Conversation history list ----
+        st.markdown("#### 📝 历史对话")
+        convs = agent_obj._store.list_conversations(limit=50)
+        if not convs:
+            st.caption("暂无历史对话")
+        else:
+            # Group by date
+            from datetime import date
+            today = date.today()
+            groups: dict[str, list] = {"今天": [], "昨天": [], "更早": []}
+            for c in convs:
+                try:
+                    ts = c["updated_at"][:10]
+                    d = date.fromisoformat(ts)
+                except Exception:
+                    groups["更早"].append(c)
+                    continue
+                if d == today:
+                    groups["今天"].append(c)
+                elif d == today.replace(day=today.day - 1):
+                    groups["昨天"].append(c)
+                else:
+                    groups["更早"].append(c)
+
+            for group_name in ["今天", "昨天", "更早"]:
+                items = groups[group_name]
+                if not items:
+                    continue
+                st.sidebar.caption(group_name)
+                for c in items:
+                    title = c["title"] or "未命名对话"
+                    if len(title) > 18:
+                        title = title[:18] + "…"
+                    col_a, col_b = st.columns([4, 1])
+                    with col_a:
+                        if st.button(title, key=f"hist_{c['id']}", use_container_width=True,
+                                     help=c.get("updated_at", "")):
+                            conv = agent_obj._store.get_conversation(c["id"])
+                            if conv:
+                                st.session_state.messages = conv.get("messages", [])
+                                st.rerun()
+                    with col_b:
+                        if st.button("🗑", key=f"del_{c['id']}", use_container_width=True):
+                            agent_obj._store.delete_conversation(c["id"])
+                            st.rerun()
+
+    st.sidebar.divider()
+    st.sidebar.caption("📎 上传文件")
+    uploaded_file = st.sidebar.file_uploader(
+        "上传文件",
+        type=None,
+        key="file_uploader",
+        label_visibility="collapsed",
+    )
+    if uploaded_file is not None:
+        # Access agent from session state inside sidebar context
+        sidebar_agent: Agent = st.session_state.agent
+        _handle_upload(uploaded_file, sidebar_agent)
+        st.rerun()
 
 # ---- Layout ---------------------------------------------------------
 left, right = st.columns([3, 2])
@@ -32,13 +240,6 @@ left, right = st.columns([3, 2])
 # =====================================================================
 with left:
     st.title("🤖 AI Agent Framework")
-
-    # New conversation button
-    if st.button("🆕 新对话", use_container_width=True):
-        st.session_state.agent.reset_conversation()
-        st.session_state.messages = []
-        st.session_state.trace = []
-        st.rerun()
 
     # Render history
     for msg in st.session_state.messages:
@@ -50,33 +251,113 @@ with left:
     if query:
         st.session_state.messages.append({"role": "user", "content": query})
         st.session_state.trace = []
+        st.session_state.ma_tasks = []
+        st.session_state.ma_trace = []
 
-        agent: Agent = st.session_state.agent
-        with st.chat_message("assistant"):
-            placeholder = st.empty()
-            placeholder.markdown("⏳ *Thinking...*")
+        if st.session_state.multi_agent_mode:
+            # ---- Multi-agent path ----
+            orch: Orchestrator = st.session_state.orchestrator
+            with st.chat_message("assistant"):
+                placeholder = st.empty()
+                placeholder.markdown("⏳ *多智能体规划中...*")
 
-            steps = list(agent.run_stream(query))
-            st.session_state.trace = steps
+                events = []
+                final_answer = ""
+                for event in orch.run_stream(query):
+                    events.append(event)
+                    if event["type"] == "plan":
+                        st.session_state.ma_tasks = event["tasks"]
+                        placeholder.markdown("⏳ *任务规划完成，执行子任务中...*")
+                    elif event["type"] == "task_start":
+                        # Update task status in the cached plan
+                        for t in st.session_state.ma_tasks:
+                            if t["id"] == event["task_id"]:
+                                t["status"] = "running"
+                    elif event["type"] == "task_done":
+                        # Update task status in the cached plan
+                        for t in st.session_state.ma_tasks:
+                            if t["id"] == event["task_id"]:
+                                t["status"] = event["status"]
+                        st.session_state.ma_trace.append(event)
+                    elif event["type"] == "finished":
+                        final_answer = event.get("answer", "")
+                st.session_state.ma_trace = events
+                placeholder.markdown(final_answer or "No result.")
 
-            # Find final answer
-            final = next((s["answer"] for s in steps if s["type"] == "finished"), None)
-            if final is None:
-                final = next((s["message"] for s in steps if s["type"] == "error"), "No result.")
-            placeholder.markdown(final)
+            st.session_state.messages.append({"role": "assistant", "content": final_answer})
+        else:
+            # ---- Single-agent path ----
+            agent: Agent = st.session_state.agent
+            with st.chat_message("assistant"):
+                placeholder = st.empty()
+                placeholder.markdown("⏳ *Thinking...*")
 
-        st.session_state.messages.append({"role": "assistant", "content": final})
+                steps = list(agent.run_stream(query))
+                st.session_state.trace = steps
+
+                final = next((s["answer"] for s in steps if s["type"] == "finished"), None)
+                if final is None:
+                    final = next((s["message"] for s in steps if s["type"] == "error"), "No result.")
+                placeholder.markdown(final)
+
+            st.session_state.messages.append({"role": "assistant", "content": final})
+
         st.rerun()
 
 # =====================================================================
 # RIGHT — Sidebar panels
 # =====================================================================
 with right:
-    st.subheader("🧠 推理轨迹")
-    render_trace(st.session_state.trace)
+    tab1, tab2 = st.tabs(["🧠 推理轨迹", "🤝 多智能体"])
 
-    st.divider()
-    render_tool_stats(st.session_state.trace)
+    # =====================================================================
+    # Tab 1 — Single-agent trace
+    # =====================================================================
+    with tab1:
+        render_trace(st.session_state.trace)
+        st.divider()
+        render_tool_stats(st.session_state.trace)
+
+    # =====================================================================
+    # Tab 2 — Multi-agent mode
+    # =====================================================================
+    with tab2:
+        st.toggle("启用多智能体模式", key="multi_agent_mode",
+                  help="开启后，复杂任务将被自动拆解为子任务并行执行")
+
+        ma_tasks = st.session_state.ma_tasks
+        if ma_tasks:
+            # ---- Graphviz dependency chart ----
+            dot = "digraph {\n  rankdir=TB;\n  node [style=filled, fontname=sans-serif];\n"
+            color_map = {"pending": "lightgray", "running": "lightblue",
+                         "done": "lightgreen", "error": "lightcoral"}
+            for t in ma_tasks:
+                c = color_map.get(t.get("status", "pending"), "lightgray")
+                label = f"{t['id']}: {t['description'][:20]}"
+                dot += f'  {t["id"]} [label="{label}", fillcolor={c}];\n'
+            for t in ma_tasks:
+                for dep in t.get("depends_on", []):
+                    dot += f"  {dep} -> {t['id']};\n"
+            dot += "}"
+            st.graphviz_chart(dot)
+
+            # ---- Task result expanders ----
+            for t in ma_tasks:
+                status_emoji = {"pending": "⏳", "running": "🔄", "done": "✅", "error": "❌"}
+                emoji = status_emoji.get(t.get("status", "pending"), "❓")
+                with st.expander(f"{emoji} [{t['id']}] {t['description'][:30]}",
+                                 expanded=(t.get("status") == "done")):
+                    # Find result from trace
+                    result_text = ""
+                    for ev in st.session_state.ma_trace:
+                        if ev.get("task_id") == t["id"] and ev.get("type") == "task_done":
+                            result_text = ev.get("result", "")
+                    if result_text:
+                        st.markdown(result_text)
+                    else:
+                        st.caption("等待执行…")
+        else:
+            st.caption("开启多智能体模式后，复杂任务计划将在此显示")
 
     st.divider()
 
@@ -89,20 +370,23 @@ with right:
 
         # ---- ① Manual add ----
         st.caption("新增记忆")
+        if "fact_input_counter" not in st.session_state:
+            st.session_state.fact_input_counter = 0
         new_fact = st.text_area(
             "新增记忆内容",
             height=80,
-            key="new_fact_input",
+            key=f"new_fact_input_{st.session_state.fact_input_counter}",
             label_visibility="collapsed",
             placeholder="输入需要长期记住的内容…",
         )
         add_col, _ = st.columns([1, 3])
         with add_col:
-            if st.button("添加", key="add_fact_btn", disabled=(not new_fact.strip()),
+            if st.button("添加", key=f"add_fact_btn_{st.session_state.fact_input_counter}",
+                         disabled=(not new_fact.strip()),
                          use_container_width=True):
                 ltm.add_fact(new_fact.strip())
                 ltm.save()
-                st.session_state.new_fact_input = ""
+                st.session_state.fact_input_counter += 1
                 st.rerun()
 
         st.divider()

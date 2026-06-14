@@ -1,19 +1,21 @@
 """ReAct Agent — main execution loop tying together llm, tools, parser, prompts, and memory."""
-import threading
 from typing import Generator
 from config.settings import settings
 from src.llm import create_llm_client
 from src.tools import register_all_tools, tool_registry
+from src.tools.memory_tool import MemoryStoreTool, MemoryRecallTool
 from src.prompts.prompt_manager import PromptManager
 from src.memory import (MessageQueue, SlidingWindow, InstructionKeeper,
                          ConversationHistory, LongTermMemory, MemoryExtractor)
+from src.storage.conversation_store import ConversationStore
+from src.storage.search_engine import SearchEngine
 from .parser import parse_response, describe_parse_error
 from .error_handler import format_observation, format_parse_error
 from .state_machine import StateMachine, AgentState
 
 
 class Agent:
-    def __init__(self, provider: str | None = None) -> None:
+    def __init__(self, provider: str | None = None, is_sub_agent: bool = False) -> None:
         self._llm = create_llm_client(provider)
         register_all_tools()
         self._pm = PromptManager(tool_registry.generate_descriptions())
@@ -24,6 +26,20 @@ class Agent:
         self._conv = ConversationHistory(llm_client=self._llm)
         self._ltm = LongTermMemory()
         self._extractor = MemoryExtractor(self._llm)
+        # Register memory-access tools so the Agent can explicitly store/recall
+        tool_registry.register(MemoryStoreTool(self._ltm, self._llm))
+        tool_registry.register(MemoryRecallTool(self._ltm))
+        # Rebuild prompt with updated tool descriptions
+        self._pm.update_tools(tool_registry.generate_descriptions())
+        # Conversation persistence + search (skipped for sub-agents)
+        self._is_sub_agent = is_sub_agent
+        if not is_sub_agent:
+            self._store = ConversationStore()
+            self._search = SearchEngine(self._store, self._llm)
+        else:
+            self._store = None
+            self._search = None
+        self._current_conv_id: str | None = None
         self._iterations: int = 0
 
     # ------------------------------------------------------------------
@@ -42,6 +58,12 @@ class Agent:
         self._mq.clear()
         self._keeper.set(user_query)
         self._iterations = 0
+
+        # Ensure a conversation file exists and record the user query
+        if self._store is not None:
+            if self._current_conv_id is None:
+                self._current_conv_id = self._store.new_conversation()
+            self._store.add_message(self._current_conv_id, "user", user_query)
 
         while not self._sm.is_terminal and self._iterations < settings.MAX_ITERATIONS:
             self._iterations += 1
@@ -72,12 +94,17 @@ class Agent:
                 self._sm.transition(AgentState.FINISHED)
                 final_answer = parsed.final_answer or ""
                 self._conv.add_turn(user_query, final_answer)
-                # Extract long-term facts asynchronously
-                threading.Thread(
-                    target=self._extract_and_save,
-                    args=(user_query, final_answer),
-                    daemon=True,
-                ).start()
+                # Extract long-term facts + deduplicate
+                facts = self._extractor.extract(user_query, final_answer)
+                for f in facts:
+                    self._ltm.add_fact(f)
+                if facts:                          # only dedup when new facts arrived
+                    self._ltm.deduplicate(self._llm)
+                self._ltm.save()
+                # Persist assistant answer + update search index
+                if self._store is not None:
+                    self._store.add_message(self._current_conv_id, "assistant", final_answer)
+                    self._search.add_to_index(self._current_conv_id)
                 yield {"type": "finished", "answer": final_answer,
                        "round": self._iterations, "thought": parsed.thought, "raw": raw}
                 return
@@ -95,8 +122,11 @@ class Agent:
             # No action?
             if not parsed.has_action:
                 self._sm.transition(AgentState.ERROR)
+                err_msg = "Model did not output a valid Action or Final Answer."
+                if self._store is not None:
+                    self._store.add_message(self._current_conv_id, "assistant", f"[错误] {err_msg}")
                 yield {"type": "error", "round": self._iterations,
-                       "message": "Model did not output a valid Action or Final Answer."}
+                       "message": err_msg}
                 return
 
             # --- ACTING ---
@@ -114,29 +144,21 @@ class Agent:
         # Max iterations
         if not self._sm.is_terminal:
             self._sm.transition(AgentState.ERROR)
+            err_msg = f"Exceeded max iterations ({settings.MAX_ITERATIONS})."
+            self._store.add_message(self._current_conv_id, "assistant", f"[错误] {err_msg}")
             yield {"type": "error", "round": self._iterations,
-                   "message": f"Exceeded max iterations ({settings.MAX_ITERATIONS})."}
+                   "message": err_msg}
             return
 
     # ------------------------------------------------------------------
-    def _extract_and_save(self, user_query: str, final_answer: str) -> None:
-        """Extract long-term facts from a finished turn and persist them."""
-        try:
-            facts = self._extractor.extract(user_query, final_answer)
-            for f in facts:
-                self._ltm.add_fact(f)
-            if facts:
-                self._ltm.save()
-        except Exception:
-            pass  # Extraction failure must not affect the main loop
-
-    # ------------------------------------------------------------------
     def reset_conversation(self) -> None:
-        """Clear both short-term working memory and long-term conversation history."""
+        """Clear working memory and start a fresh conversation."""
         self._mq.clear()
         self._conv.clear()
         self._keeper.clear()
         self._sm.reset()
+        if self._store is not None:
+            self._current_conv_id = self._store.new_conversation()
 
     # ------------------------------------------------------------------
     @property
