@@ -25,7 +25,7 @@ if exist "build" rmdir /s /q "build"
 echo [*] Building .exe (this may take 2-5 minutes)...
 echo.
 
-REM ---- PyInstaller build ----
+REM ---- PyInstaller build (only core, no demos/tests/docs/sandbox) ----
 pyinstaller --noconfirm --clean ^
     --name "AI-Agent" ^
     --add-data "src;src" ^
@@ -34,12 +34,14 @@ pyinstaller --noconfirm --clean ^
     --add-data "prompts;prompts" ^
     --add-data ".chainlit;.chainlit" ^
     --add-data "chainlit.md;." ^
+    --exclude-module tests ^
+    --exclude-module experiments ^
+    --exclude-module scripts ^
     --hidden-import streamlit ^
     --hidden-import chainlit ^
     --hidden-import openai ^
     --hidden-import dotenv ^
     --hidden-import yaml ^
-    --hidden-import urllib.parse ^
     --collect-all streamlit ^
     --collect-all chainlit ^
     launcher.py
