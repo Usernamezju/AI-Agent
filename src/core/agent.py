@@ -1,10 +1,12 @@
 """ReAct Agent — main execution loop tying together llm, tools, parser, prompts, and memory."""
+import threading
 from typing import Generator
 from config.settings import settings
 from src.llm import create_llm_client
 from src.tools import register_all_tools, tool_registry
 from src.prompts.prompt_manager import PromptManager
-from src.memory import MessageQueue, SlidingWindow, InstructionKeeper
+from src.memory import (MessageQueue, SlidingWindow, InstructionKeeper,
+                         ConversationHistory, LongTermMemory, MemoryExtractor)
 from .parser import parse_response, describe_parse_error
 from .error_handler import format_observation, format_parse_error
 from .state_machine import StateMachine, AgentState
@@ -19,6 +21,9 @@ class Agent:
         self._mq = MessageQueue()
         self._keeper = InstructionKeeper()
         self._window = SlidingWindow()
+        self._conv = ConversationHistory(llm_client=self._llm)
+        self._ltm = LongTermMemory()
+        self._extractor = MemoryExtractor(self._llm)
         self._iterations: int = 0
 
     # ------------------------------------------------------------------
@@ -44,6 +49,14 @@ class Agent:
             # --- THINKING ---
             self._sm.transition(AgentState.THINKING)
             messages = self._pm.build(user_query, self._mq.get_all())
+            # Inject long-term memory facts into system prompt
+            ltm_block = self._ltm.format_for_prompt()
+            if ltm_block:
+                messages[0]["content"] += ltm_block
+            # Inject multi-turn conversation history (session memory)
+            conv_ctx = self._conv.get_context_prompt()
+            if conv_ctx:
+                messages.insert(1, {"role": "user", "content": conv_ctx})
             messages = self._window.apply(messages)
             reminder = self._keeper.get_reminder()
             if reminder:
@@ -57,7 +70,15 @@ class Agent:
             # Finished?
             if parsed.is_finished:
                 self._sm.transition(AgentState.FINISHED)
-                yield {"type": "finished", "answer": parsed.final_answer or "",
+                final_answer = parsed.final_answer or ""
+                self._conv.add_turn(user_query, final_answer)
+                # Extract long-term facts asynchronously
+                threading.Thread(
+                    target=self._extract_and_save,
+                    args=(user_query, final_answer),
+                    daemon=True,
+                ).start()
+                yield {"type": "finished", "answer": final_answer,
                        "round": self._iterations, "thought": parsed.thought, "raw": raw}
                 return
 
@@ -96,6 +117,26 @@ class Agent:
             yield {"type": "error", "round": self._iterations,
                    "message": f"Exceeded max iterations ({settings.MAX_ITERATIONS})."}
             return
+
+    # ------------------------------------------------------------------
+    def _extract_and_save(self, user_query: str, final_answer: str) -> None:
+        """Extract long-term facts from a finished turn and persist them."""
+        try:
+            facts = self._extractor.extract(user_query, final_answer)
+            for f in facts:
+                self._ltm.add_fact(f)
+            if facts:
+                self._ltm.save()
+        except Exception:
+            pass  # Extraction failure must not affect the main loop
+
+    # ------------------------------------------------------------------
+    def reset_conversation(self) -> None:
+        """Clear both short-term working memory and long-term conversation history."""
+        self._mq.clear()
+        self._conv.clear()
+        self._keeper.clear()
+        self._sm.reset()
 
     # ------------------------------------------------------------------
     @property
