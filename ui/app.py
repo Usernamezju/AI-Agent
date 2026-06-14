@@ -42,20 +42,33 @@ if "last_uploaded" not in st.session_state:
 # ═══════════════════════════════════════════════════════════════════════
 
 
-def _handle_upload(uploaded_file, agent: Agent) -> None:
-    """Save uploaded file to sandbox, extract text/image, and inject a notice."""
+def _handle_upload(uploaded_file, agent: Agent, scope: str = "global") -> None:
+    """Save uploaded file to sandbox, extract text/image, and inject a notice.
+
+    *scope* is ``"global"`` or ``"session"`` — determines the target subdirectory.
+    """
     from pathlib import Path
     from config.settings import settings
     from src.tools.file_extractor import extract_text, extract_image_description, IMAGE_EXTENSIONS
 
-    file_key = f"{uploaded_file.name}_{uploaded_file.size}"
+    file_key = f"{scope}:{uploaded_file.name}_{uploaded_file.size}"
     if st.session_state.last_uploaded == file_key:
         return
     st.session_state.last_uploaded = file_key
 
     sandbox = Path(settings.SANDBOX_ROOT)
-    sandbox.mkdir(parents=True, exist_ok=True)
-    save_path = sandbox / uploaded_file.name
+    conv_id = getattr(agent, "_current_conv_id", None)
+
+    # Determine save directory based on scope
+    if scope == "session" and conv_id:
+        save_dir = sandbox / "sessions" / conv_id
+        path_hint = f"sessions/{conv_id}/{uploaded_file.name}（仅本对话）"
+    else:
+        save_dir = sandbox / "global"
+        path_hint = f"global/{uploaded_file.name}（所有对话可用）"
+
+    save_dir.mkdir(parents=True, exist_ok=True)
+    save_path = save_dir / uploaded_file.name
     save_path.write_bytes(uploaded_file.getvalue())
 
     suffix = save_path.suffix.lower()
@@ -65,10 +78,6 @@ def _handle_upload(uploaded_file, agent: Agent) -> None:
         from src.llm import create_llm_client
         try:
             vision_client = create_llm_client("qwen")
-            # Override model to vision-capable one
-            if hasattr(vision_client, "_client"):
-                # Store original model name, swap in vision model
-                pass  # Will be set via internal attribute
             vision_client.model = settings.QWEN_VISION_MODEL
             description, img_error = extract_image_description(save_path, vision_client)
         except Exception:
@@ -77,14 +86,14 @@ def _handle_upload(uploaded_file, agent: Agent) -> None:
         if img_error:
             notice = (
                 f"[系统通知] 用户上传了图片：{uploaded_file.name}（{uploaded_file.size} 字节）\n"
-                f"文件已保存至 sandbox/{uploaded_file.name}\n"
+                f"文件已保存至 {path_hint}\n"
                 f"图片理解失败：{img_error}"
             )
         else:
             preview = description[:300] + "…" if len(description) > 300 else description
             notice = (
                 f"[系统通知] 用户上传了图片：{uploaded_file.name}（{uploaded_file.size} 字节）\n"
-                f"文件已保存至 sandbox/{uploaded_file.name}\n"
+                f"文件已保存至 {path_hint}\n"
                 f"图片内容描述（Qwen-VL）：\n```\n{preview}\n```\n"
                 "请基于以上描述回答用户关于此图片的问题。"
             )
@@ -94,16 +103,16 @@ def _handle_upload(uploaded_file, agent: Agent) -> None:
         if error:
             notice = (
                 f"[系统通知] 用户上传了文件：{uploaded_file.name}（{uploaded_file.size} 字节）\n"
-                f"文件已保存至 sandbox/{uploaded_file.name}，但文本提取失败：{error}\n"
+                f"文件已保存至 {path_hint}，但文本提取失败：{error}\n"
                 "如需读取，请使用 local_filesystem 工具。"
             )
         else:
             preview = text[:300] + "…" if len(text) > 300 else text
             notice = (
                 f"[系统通知] 用户上传了文件：{uploaded_file.name}（{uploaded_file.size} 字节）\n"
-                f"文件已保存至 sandbox/{uploaded_file.name}，内容预览：\n"
+                f"文件已保存至 {path_hint}，内容预览：\n"
                 f"```\n{preview}\n```\n"
-                f"完整内容可用 local_filesystem 工具读取，path 填写 \"{uploaded_file.name}\"。"
+                f"完整内容可用 local_filesystem 工具读取，path 填写 \"{path_hint.split('（')[0]}\"。"
             )
 
     st.session_state.messages.append({"role": "user", "content": notice})
@@ -117,21 +126,86 @@ def _handle_upload(uploaded_file, agent: Agent) -> None:
         st.warning(error)
 
 # ═══════════════════════════════════════════════════════════════════════
-# SIDEBAR — Search + Conversation history
+# SIDEBAR
 # ═══════════════════════════════════════════════════════════════════════
 with st.sidebar:
+    # ---- Settings (collapsed by default) ----
+    with st.expander("⚙️ 设置", expanded=False):
+        from dotenv import load_dotenv, set_key as dotenv_set_key
+        _env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), ".env")
+        load_dotenv(_env_path, override=True)
+        _cur_provider = os.getenv("DEFAULT_LLM_PROVIDER", "deepseek")
+        _cur_deepseek_key = os.getenv("DEEPSEEK_API_KEY", "")
+        _cur_qwen_key = os.getenv("QWEN_API_KEY", "")
+        _cur_deepseek_model = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+        _cur_qwen_model = os.getenv("QWEN_MODEL", "qwen-plus")
+
+        provider = st.selectbox("LLM 供应商", ["deepseek", "qwen"],
+                                 index=0 if _cur_provider == "deepseek" else 1,
+                                 key="settings_provider")
+
+        if provider == "deepseek":
+            api_key = st.text_input("DeepSeek API Key", value=_cur_deepseek_key,
+                                     type="password", key="settings_ds_key",
+                                     placeholder="sk-...")
+            model = st.text_input("模型名称", value=_cur_deepseek_model,
+                                   key="settings_ds_model")
+        else:
+            api_key = st.text_input("Qwen API Key", value=_cur_qwen_key,
+                                     type="password", key="settings_qw_key",
+                                     placeholder="sk-...")
+            model = st.text_input("模型名称", value=_cur_qwen_model,
+                                   key="settings_qw_model")
+
+        if st.button("💾 保存设置", use_container_width=True, key="settings_save"):
+            # Write to .env
+            with open(_env_path, "w", encoding="utf-8") as f:
+                f.write(f"# AI Agent Framework — Configuration\n")
+                f.write(f"# Generated by Settings panel\n\n")
+                f.write(f"DEFAULT_LLM_PROVIDER={provider}\n")
+                if provider == "deepseek":
+                    f.write(f"DEEPSEEK_API_KEY={api_key}\n")
+                    if model:
+                        f.write(f"DEEPSEEK_MODEL={model}\n")
+                    if _cur_qwen_key:
+                        f.write(f"QWEN_API_KEY={_cur_qwen_key}\n")
+                else:
+                    f.write(f"QWEN_API_KEY={api_key}\n")
+                    if model:
+                        f.write(f"QWEN_MODEL={model}\n")
+                    if _cur_deepseek_key:
+                        f.write(f"DEEPSEEK_API_KEY={_cur_deepseek_key}\n")
+                f.write(f"SANDBOX_ROOT=./sandbox\n")
+            # Recreate agent's LLM client
+            try:
+                from src.llm import create_llm_client
+                from src.tools import tool_registry
+                st.session_state.agent._llm = create_llm_client(provider)
+                st.session_state.agent._pm.update_tools(
+                    tool_registry.generate_descriptions())
+                st.session_state.agent._extractor._llm = st.session_state.agent._llm
+                st.success(f"已切换到 {provider} / {model}")
+            except Exception as e:
+                st.error(f"切换失败：{e}")
+
     st.markdown("### 🔍 搜索对话")
-    sq = st.text_input("搜索对话", placeholder="输入关键词…", key="search_query",
-                        label_visibility="collapsed")
-    c1, c2 = st.columns(2)
-    use_ai = c1.checkbox("AI 语义", value=False, key="use_ai_search")
-    if c2.button("搜索", key="search_btn", use_container_width=True):
-        if sq.strip():
+    def _do_search():
+        q = st.session_state.get("search_query", "").strip()
+        if q:
             agent_obj: Agent = st.session_state.agent
-            results = agent_obj._search.search(sq.strip(), use_ai=use_ai)
-            st.session_state.search_results = results
+            st.session_state.search_results = agent_obj._search.search(
+                q, use_ai=st.session_state.get("use_ai_search", False))
         else:
             st.session_state.search_results = None
+
+    sq = st.text_input("搜索对话", placeholder="输入关键词后按 Enter 搜索…",
+                        key="search_query", label_visibility="collapsed",
+                        on_change=_do_search)
+    c1, c2 = st.columns(2)
+    use_ai = c1.checkbox("AI 语义", value=False, key="use_ai_search",
+                         on_change=_do_search)
+    if c2.button("搜索", key="search_btn", use_container_width=True):
+        _do_search()
 
     # Clear search
     if st.session_state.search_results is not None:
@@ -230,10 +304,9 @@ with st.sidebar:
     from config.settings import settings as _settings
     from src.tools import tool_registry as _sidebar_tr
 
-    _default_sandbox = str(_settings.SANDBOX_ROOT)
-
+    _default_dir = str(Path.cwd())
     if "working_dir" not in st.session_state:
-        st.session_state.working_dir = _default_sandbox
+        st.session_state.working_dir = _default_dir
 
     st.sidebar.caption("📂 工作目录")
 
@@ -241,93 +314,212 @@ with st.sidebar:
     _ci_tool = _sidebar_tr.get("code_interpreter")
     _current = getattr(_fs_tool, "current_root", st.session_state.working_dir)
 
-    # Show current path + mode badge
-    _is_sandbox = Path(_current).resolve() == Path(_default_sandbox).resolve()
-    _badge = "🔒 沙箱" if _is_sandbox else "📁 自定义"
-    _display = _current if len(_current) <= 36 else "…" + _current[-34:]
+    _display = _current if len(_current) <= 42 else "…" + _current[-40:]
     st.sidebar.markdown(
-        f"<small style='color:#888'>{_badge}：<code>{_display}</code></small>",
+        f"<small style='color:#888'><code>{_display}</code></small>",
         unsafe_allow_html=True,
     )
 
-    # --- browse button (native OS dialog via tkinter) ---
-    def _pick_directory() -> str:
-        try:
-            import tkinter as tk
-            from tkinter import filedialog
-            root = tk.Tk()
-            root.withdraw()
-            root.wm_attributes("-topmost", 1)
-            chosen = filedialog.askdirectory(
-                title="选择工作目录",
-                initialdir=_current,
-            )
-            root.destroy()
-            return chosen or ""
-        except Exception:
-            return ""
-
-    _bc1, _bc2, _bc3 = st.sidebar.columns([2, 2, 2])
-    with _bc1:
-        if st.button("📁 浏览", key="wd_browse", use_container_width=True):
-            chosen = _pick_directory()
-            if chosen:
-                _err = _fs_tool.set_root(chosen) if _fs_tool else ""
-                if not _err and _ci_tool:
-                    _err = _ci_tool.set_sandbox(chosen)
-                if _err:
-                    st.sidebar.error(f"切换失败：{_err}")
-                else:
-                    st.session_state.working_dir = chosen
-                    st.rerun()
-    with _bc2:
-        if st.button("✏️ 手输", key="wd_manual_toggle", use_container_width=True):
-            st.session_state["wd_manual"] = not st.session_state.get("wd_manual", False)
-            st.rerun()
-    with _bc3:
-        if st.button("🔒 沙箱", key="wd_reset", use_container_width=True):
-            if _fs_tool:
-                _fs_tool.set_root(_default_sandbox)
-            if _ci_tool:
-                _ci_tool.set_sandbox(_default_sandbox)
-            st.session_state.working_dir = _default_sandbox
-            st.session_state["wd_manual"] = False
-            st.rerun()
-
-    # Manual path input (collapsed by default)
-    if st.session_state.get("wd_manual", False):
-        _new_dir = st.sidebar.text_input(
-            "手动输入路径", value=_current,
-            key="wd_input", label_visibility="collapsed",
-            placeholder="输入绝对路径…",
-        )
-        if st.sidebar.button("确认切换", key="wd_apply", use_container_width=True):
-            _err = _fs_tool.set_root(_new_dir) if _fs_tool else ""
+    # --- Manual path input (with Windows→WSL auto-conversion) ---
+    _manual = st.sidebar.text_input(
+        "输入路径", placeholder="粘贴路径后按 Enter…",
+        key="wd_manual", label_visibility="collapsed"
+    )
+    if _manual and _manual.strip() != _current:
+        _mp = _manual.strip()
+        import platform, re as _re
+        if platform.system() == "Linux" and _re.match(r'^[A-Z]:[\\/]', _mp):
+            _mp = "/mnt/" + _mp[0].lower() + _mp[2:].replace("\\", "/")
+        _mp = str(Path(_mp).expanduser().resolve())
+        if not Path(_mp).exists():
+            st.sidebar.error(f"路径不存在：{_mp}")
+        else:
+            _err = _fs_tool.set_root(_mp) if _fs_tool else ""
             if not _err and _ci_tool:
-                _err = _ci_tool.set_sandbox(_new_dir)
+                _err = _ci_tool.set_sandbox(_mp)
             if _err:
                 st.sidebar.error(f"切换失败：{_err}")
             else:
-                st.session_state.working_dir = _new_dir
-                st.session_state["wd_manual"] = False
+                st.session_state.working_dir = _mp
+                st.sidebar.success(f"已切换")
+                st.rerun()
+
+    # System-native folder picker
+    def _pick_directory(initial: str) -> str:
+        import subprocess, sys, shutil
+        try:
+            win_initial = subprocess.run(
+                ["wslpath", "-w", initial], capture_output=True, text=True, timeout=5
+            ).stdout.strip()
+        except Exception:
+            win_initial = initial
+        for ps_cmd in ("powershell.exe", "powershell"):
+            if not shutil.which(ps_cmd):
+                continue
+            ps = ("Add-Type -AssemblyName System.Windows.Forms;"
+                  "$d=New-Object System.Windows.Forms.FolderBrowserDialog;"
+                  "$d.Description='选择工作目录';"
+                  f"$d.SelectedPath={repr(win_initial)};"
+                  "if($d.ShowDialog()-eq'OK'){$d.SelectedPath}")
+            try:
+                r = subprocess.run([ps_cmd,"-NoProfile","-Command",ps],
+                                   capture_output=True,text=True,timeout=120)
+                wp = r.stdout.strip()
+                if wp:
+                    wsl = subprocess.run(["wslpath","-u",wp],capture_output=True,text=True,timeout=5)
+                    return wsl.stdout.strip() or wp
+            except Exception:
+                continue
+        if sys.platform == "win32":
+            try:
+                import tkinter as tk; from tkinter import filedialog
+                root=tk.Tk();root.withdraw();root.wm_attributes('-topmost',1)
+                d=filedialog.askdirectory(title='选择工作目录',initialdir=initial)
+                root.destroy();return d or ""
+            except Exception:
+                pass
+        try:
+            import tkinter as tk; from tkinter import filedialog
+            root=tk.Tk();root.withdraw();root.wm_attributes('-topmost',1)
+            d=filedialog.askdirectory(title='选择工作目录',initialdir=initial)
+            root.destroy()
+            if d: return d
+        except Exception:
+            pass
+        for cmd,args in [("zenity",["--file-selection","--directory","--title=选择工作目录"]),
+                          ("kdialog",["--getexistingdirectory",initial])]:
+            if shutil.which(cmd):
+                try:
+                    r=subprocess.run([cmd]+args,capture_output=True,text=True,timeout=30)
+                    if r.stdout.strip(): return r.stdout.strip()
+                except Exception:
+                    continue
+        return ""
+
+    # Browse button
+    if st.sidebar.button("📁 浏览…", key="wd_browse", use_container_width=True):
+        _picked = _pick_directory(_current)
+        if _picked:
+            _err = _fs_tool.set_root(_picked) if _fs_tool else ""
+            if not _err and _ci_tool:
+                _err = _ci_tool.set_sandbox(_picked)
+            if _err:
+                st.sidebar.error(f"切换失败：{_err}")
+            else:
+                st.session_state.working_dir = _picked
                 st.rerun()
 
     st.sidebar.divider()
-    st.sidebar.caption("📎 上传文件")
-    uploaded_file = st.sidebar.file_uploader(
-        "上传文件",
-        type=None,
-        key="file_uploader",
-        label_visibility="collapsed",
-    )
-    if uploaded_file is not None:
-        # Access agent from session state inside sidebar context
-        sidebar_agent: Agent = st.session_state.agent
-        _handle_upload(uploaded_file, sidebar_agent)
-        st.rerun()
 
-# ---- chat_input at top level (must be outside any container) ----
+    # ═══════════════════════════════════════════════════════════════════
+    # Dual-tier file upload: global + session
+    # ═══════════════════════════════════════════════════════════════════
+    from pathlib import Path as _Path
+    from config.settings import settings as _fs_settings
+
+    _sandbox_path = _Path(_fs_settings.SANDBOX_ROOT)
+    sidebar_agent: Agent = st.session_state.agent
+
+    ftab1, ftab2 = st.sidebar.tabs(["🌐 全局文件", "💬 对话文件"])
+
+    # ---- Tab 1: Global files ----
+    with ftab1:
+        st.caption("所有对话可访问")
+        global_dir = _sandbox_path / "global"
+        global_dir.mkdir(parents=True, exist_ok=True)
+        # Upload
+        gfile = st.file_uploader(
+            "全局上传", type=None, key="global_uploader",
+            label_visibility="collapsed",
+        )
+        if gfile is not None:
+            _handle_upload(gfile, sidebar_agent, scope="global")
+        # List
+        gfiles = sorted([f for f in global_dir.iterdir() if f.is_file()],
+                        key=lambda x: x.name)
+        if not gfiles:
+            st.caption("（空）")
+        else:
+            for gf in gfiles:
+                cg1, cg2 = st.columns([5, 1])
+                with cg1:
+                    st.markdown(f"<small>{gf.name}</small>", unsafe_allow_html=True)
+                with cg2:
+                    if st.button("🗑", key=f"delg_{gf.name}", use_container_width=True):
+                        gf.unlink()
+                        st.rerun()
+
+    # ---- Tab 2: Session files ----
+    with ftab2:
+        st.caption("仅当前对话可见")
+        _sid = sidebar_agent._current_conv_id
+        if not _sid:
+            st.caption("请先发送消息以开始对话")
+        else:
+            session_dir = _sandbox_path / "sessions" / _sid
+            session_dir.mkdir(parents=True, exist_ok=True)
+            # Upload
+            sfile = st.file_uploader(
+                "对话上传", type=None, key="session_uploader",
+                label_visibility="collapsed",
+            )
+            if sfile is not None:
+                _handle_upload(sfile, sidebar_agent, scope="session")
+            # List
+            sfiles = sorted([f for f in session_dir.iterdir() if f.is_file()],
+                            key=lambda x: x.name)
+            if not sfiles:
+                st.caption("（空）")
+            else:
+                for sf in sfiles:
+                    cs1, cs2 = st.columns([5, 1])
+                    with cs1:
+                        st.markdown(f"<small>{sf.name}</small>", unsafe_allow_html=True)
+                    with cs2:
+                        if st.button("🗑", key=f"dels_{sf.name}", use_container_width=True):
+                            sf.unlink()
+                            st.rerun()
+
+# ---- chat_input must be at top level (outside any column) so it floats to bottom ----
 query = st.chat_input("输入任务…")
+
+# ═══════════════════════════════════════════════════════════════════════
+# File upload popover (📎 button — placed above chat area)
+# ═══════════════════════════════════════════════════════════════════════
+with st.popover("📎 添加文件"):
+    st.caption("添加文件到当前对话")
+    _pop_tab1, _pop_tab2 = st.tabs(["📂 从全局选取", "📤 本地上传"])
+
+    _pop_agent: Agent = st.session_state.agent
+    _pop_sid = _pop_agent._current_conv_id
+    _pop_sandbox = Path(_fs_settings.SANDBOX_ROOT)
+
+    with _pop_tab1:
+        # List global files, click to copy to session
+        _gdir = _pop_sandbox / "global"
+        _gdir.mkdir(parents=True, exist_ok=True)
+        _gfiles = sorted([f for f in _gdir.iterdir() if f.is_file()], key=lambda x: x.name)
+        if not _gfiles:
+            st.caption("全局目录为空")
+        else:
+            for _gf in _gfiles:
+                if st.button(f"📄 {_gf.name}", key=f"pop_g_{_gf.name}", use_container_width=True):
+                    if _pop_sid:
+                        _sdir = _pop_sandbox / "sessions" / _pop_sid
+                        _sdir.mkdir(parents=True, exist_ok=True)
+                        (_sdir / _gf.name).write_bytes(_gf.read_bytes())
+                        st.rerun()
+                    else:
+                        st.warning("请先发送消息以开始对话")
+
+    with _pop_tab2:
+        if not _pop_sid:
+            st.caption("请先发送消息以开始对话")
+        else:
+            _pfile = st.file_uploader("拖拽文件到此处", type=None, key="popup_uploader",
+                                      label_visibility="collapsed")
+            if _pfile is not None:
+                _handle_upload(_pfile, _pop_agent, scope="session")
 
 # ---- Layout ---------------------------------------------------------
 left, right = st.columns([3, 2])
@@ -676,8 +868,7 @@ if query:
         # ---- Multi-agent path ----
         orch: Orchestrator = st.session_state.orchestrator
         with st.chat_message("assistant"):
-            placeholder = st.empty()
-            placeholder.markdown("⏳ *多智能体规划中...*")
+            think_container = st.status("🧠 多智能体规划中…", expanded=True)
 
             events = []
             final_answer = ""
@@ -685,49 +876,95 @@ if query:
                 events.append(event)
                 if event["type"] == "plan":
                     st.session_state.ma_tasks = event["tasks"]
-                    placeholder.markdown("⏳ *任务规划完成，执行子任务中...*")
+                    think_container.write(f"📋 任务计划：{len(event['tasks'])} 个子任务")
                 elif event["type"] == "task_start":
                     for t in st.session_state.ma_tasks:
                         if t["id"] == event["task_id"]:
                             t["status"] = "running"
+                    think_container.write(f"🔄 执行中：{event.get('task_id', '?')}")
                 elif event["type"] == "task_done":
                     for t in st.session_state.ma_tasks:
                         if t["id"] == event["task_id"]:
                             t["status"] = event["status"]
                     st.session_state.ma_trace.append(event)
+                    ok = "✅" if event.get("status") == "done" else "❌"
+                    think_container.write(
+                        f"{ok} 完成：{event.get('task_id', '?')} — {str(event.get('result', ''))[:100]}")
                 elif event["type"] == "finished":
                     final_answer = event.get("answer", "")
+                    think_container.update(
+                        label=f"思考完成（{len(events)} 个事件）", state="complete", expanded=False)
             st.session_state.ma_trace = events
             st.session_state.trace = events
-            placeholder.markdown(final_answer or "No result.")
+            st.markdown(final_answer or "No result.")
 
         st.session_state.messages.append({"role": "assistant", "content": final_answer})
     else:
         # ---- Single-agent path ----
         agent: Agent = st.session_state.agent
         with st.chat_message("assistant"):
-            placeholder = st.empty()
-            placeholder.markdown("⏳ *Thinking...*")
+            # Real-time thinking container
+            think_container = st.status("思考中…", expanded=True)
+            steps: list[dict] = []
+            final: str = ""
 
-            steps = list(agent.run_stream(query))
+            for step in agent.run_stream(query):
+                steps.append(step)
+                etype = step.get("type")
+
+                if etype == "step":
+                    action = step.get("action", "?")
+                    thought = step.get("thought", "")[:200]
+                    obs = step.get("observation", "")[:200]
+                    think_container.write(
+                        f"🔧 **{action}**\n\n> {thought}\n\n👁 {obs}"
+                    )
+                elif etype == "parse_error":
+                    think_container.write(f"⚠️ Parse error: {step.get('error', '?')}")
+                elif etype == "finished":
+                    final = step.get("answer", "")
+                    think_container.update(
+                        label=f"思考完成（{len(steps)} 步）", state="complete", expanded=False)
+                elif etype == "error":
+                    final = step.get("message", "Error.")
+                    think_container.update(label="思考出错", state="error")
+
             st.session_state.trace = steps
-
-            final = next((s["answer"] for s in steps if s["type"] == "finished"), None)
-            if final is None:
-                final = next((s["message"] for s in steps if s["type"] == "error"), "No result.")
-            placeholder.markdown(final)
+            if not final:
+                final = next((s.get("message", "No result.") for s in steps if s.get("type") == "error"), "No result.")
+            st.markdown(final)
 
             # Render any visualizations generated during this run
             viz_files = [s["visualization"] for s in steps if s.get("visualization")]
             if viz_files:
-                from config.settings import settings
                 from pathlib import Path
+                from config.settings import settings
+                _conv_id = getattr(st.session_state.agent, "_current_conv_id", None)
                 for vf in viz_files:
-                    viz_path = Path(settings.SANDBOX_ROOT) / vf
-                    if viz_path.exists():
-                        st.components.v1.html(
-                            viz_path.read_text(encoding="utf-8"),
-                            height=420, scrolling=False)
+                    candidates = [Path(vf)]
+                    try:
+                        candidates.append(Path(settings.SANDBOX_ROOT) / vf)
+                    except Exception:
+                        pass
+                    try:
+                        candidates.append(Path(st.session_state.get("working_dir", ".")) / vf)
+                    except Exception:
+                        pass
+                    if _conv_id:
+                        try:
+                            candidates.append(
+                                Path(settings.SANDBOX_ROOT) / "sessions" / _conv_id / "viz" / Path(vf).name)
+                        except Exception:
+                            pass
+                    for vp in candidates:
+                        try:
+                            if vp.exists():
+                                st.components.v1.html(
+                                    vp.read_text(encoding="utf-8"),
+                                    height=420, scrolling=False)
+                                break
+                        except Exception:
+                            continue
 
         st.session_state.messages.append({"role": "assistant", "content": final})
 

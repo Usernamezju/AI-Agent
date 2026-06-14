@@ -115,6 +115,10 @@ class Agent:
                 hint = self._dir_memory.format_hint(dpath)
                 if hint:
                     messages.insert(1, {"role": "system", "content": hint})
+            # Inject available file lists (dual-tier: global + session)
+            file_hint = self._build_file_list_hint()
+            if file_hint:
+                messages[0]["content"] += file_hint
             # Inject multi-turn conversation history (session memory)
             conv_ctx = self._conv.get_context_prompt()
             if conv_ctx:
@@ -212,12 +216,42 @@ class Agent:
                         self._accessed_dirs.add(dir_path)
                 except Exception:
                     pass
-            # Extract visualization file name if present
+            # Extract / auto-detect visualization, then copy into session dir
             viz_file = None
+            from pathlib import Path as _P
+            _sandbox = _P(settings.SANDBOX_ROOT)
             if parsed.action == "visualize":
                 try:
                     obs_data = json.loads(result)
                     viz_file = obs_data.get("visualization_file")
+                except Exception:
+                    pass
+            if not viz_file and parsed.action in ("local_filesystem", "code_interpreter"):
+                try:
+                    ai = parsed.action_input or {}
+                    fpath = ai.get("path", "")
+                    if fpath.lower().endswith(".html"):
+                        fs = tool_registry.get("local_filesystem")
+                        root = getattr(fs, "_root", _P("."))
+                        full = (_P(str(root)) / fpath.lstrip("/\\")).resolve()
+                        if full.exists():
+                            content = full.read_text(encoding="utf-8", errors="ignore")
+                            if "<canvas" in content or "Chart" in content or "<script" in content:
+                                viz_file = str(full)  # absolute path
+                except Exception:
+                    pass
+            # Copy viz file into session directory so it stays with the conversation
+            if viz_file and self._current_conv_id:
+                try:
+                    _src = _P(viz_file)
+                    if not _src.is_absolute():
+                        _src = _sandbox / _src
+                    if _src.exists():
+                        _session_viz_dir = _sandbox / "sessions" / self._current_conv_id / "viz"
+                        _session_viz_dir.mkdir(parents=True, exist_ok=True)
+                        _dst = _session_viz_dir / _src.name
+                        _dst.write_bytes(_src.read_bytes())
+                        viz_file = str(_dst)  # absolute path to session copy
                 except Exception:
                     pass
             all_steps.append({"thought": parsed.thought, "action": parsed.action,
@@ -334,6 +368,31 @@ class Agent:
                     self._dir_memory.save(dir_path, updated.strip())
             except Exception:
                 pass
+
+    # ------------------------------------------------------------------
+    def _build_file_list_hint(self) -> str:
+        """Return an '[当前对话文件]' block listing only session-context files.
+
+        Only session-scoped files are shown — the agent treats these as
+        implicitly available.  Global files and other sessions' files are
+        accessible via local_filesystem but are NOT listed here to avoid
+        polluting the context window.
+        """
+        from pathlib import Path
+        sandbox = Path(settings.SANDBOX_ROOT)
+        lines: list[str] = []
+
+        if self._current_conv_id:
+            session_dir = sandbox / "sessions" / self._current_conv_id
+            if session_dir.exists():
+                sfiles = sorted([f.name for f in session_dir.iterdir() if f.is_file()])
+                if sfiles:
+                    lines.append(f"可用文件（当前对话）：{', '.join(sfiles)}")
+                    lines.append("（其他文件可通过 local_filesystem 在 sandbox 中查找）")
+
+        if not lines:
+            return ""
+        return "\n\n[当前对话文件]\n" + "\n".join(lines)
 
     # ------------------------------------------------------------------
     def reset_conversation(self) -> None:

@@ -26,3 +26,6 @@ chainlit>=1.0.0
 
 # Optional — PDF upload support
 # PyPDF2>=3.0.0
+
+# Optional — Package as .exe (Windows)
+# pyinstaller>=6.0.0

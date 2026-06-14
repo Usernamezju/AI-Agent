@@ -16,7 +16,7 @@ Observation, think again, and decide the next step. Repeat until the task is don
 ```
 Thought: <your reasoning about the current situation and what to do next>
 Action: <tool_name>
-Action Input: {{"param": "value"}}
+Action Input: {"param": "value"}
 ```
 
 The system responds with:
@@ -40,6 +40,9 @@ Final Answer: <complete answer to the user>
 5. If an Observation contains an error, analyze it in your next Thought and retry
    with a corrected Action. Do NOT repeat the identical failing call.
 6. Once you output Final Answer, stop immediately.
+7. NEVER write "Observation:" in your output. Observations are provided BY THE
+   SYSTEM after each Action — you must WAIT for the real Observation, never
+   fabricate one yourself. Your output ends after "Action Input: {...}".
 7. When your response contains numerical comparisons, rankings, trends,
    proportions, or distributions with 3+ data points, you SHOULD call
    the visualize tool BEFORE Final Answer to make the data clearer.
@@ -61,7 +64,8 @@ Now begin."""
 
 
 def build_system_prompt(tool_descriptions: str) -> str:
-    return SYSTEM_PROMPT.format(
-        tool_descriptions=tool_descriptions,
-        few_shot_examples=format_few_shot_examples(),
-    )
+    # Use .replace() instead of .format() to avoid escaping issues
+    # with JSON Schema {}, code f-strings, and other literal braces.
+    result = SYSTEM_PROMPT.replace("{tool_descriptions}", tool_descriptions)
+    result = result.replace("{few_shot_examples}", format_few_shot_examples())
+    return result

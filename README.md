@@ -1,6 +1,6 @@
 # AI Agent Framework
 
-从零搭建的 ReAct 范式 AI Agent 框架——让大语言模型从"会说话"变成"能做事"，并在此基础上实现了记忆进化、多智能体协作、运行时工具合成等多项创新设计。
+从零搭建的 ReAct 范式 AI Agent 框架——让大语言模型从"会说话"变成"能做事"。在此基础上实现了渐进式记忆压缩、多智能体协作、运行时工具合成、Reflexion 经验积累、BM25 全文搜索、多模态文件理解等创新设计。
 
 ---
 
@@ -45,14 +45,15 @@
 │   │   ├── system_prompt.py    #   ReAct 模板（含可视化和辩论触发规则）
 │   │   ├── few_shot_examples.py#   少样本示例
 │   │   └── prompt_manager.py   #   动态消息构建
-│   ├── tools/                  # 工具系统（9 个工具）
+│   ├── tools/                  # 工具系统（11 个工具）
 │   │   ├── base.py             #   BaseTool（ABC，duck typing 兼容）
 │   │   ├── registry.py         #   统一注册表
 │   │   ├── calculator.py       #   AST 安全计算器
 │   │   ├── wikipedia_search.py #   维基百科搜索
-│   │   ├── local_filesystem.py #   沙箱文件读写
+│   │   ├── web_search.py       #   DuckDuckGo 全网搜索 + 网页抓取
+│   │   ├── local_filesystem.py #   本地文件系统读写
 │   │   ├── code_interpreter.py #   Python 子进程沙箱
-│   │   ├── visualizer.py       #   Chart.js 图表生成
+│   │   ├── visualizer.py       #   Chart.js 图表内联渲染
 │   │   ├── debate_tool.py      #   多视角辩论工具
 │   │   ├── memory_tool.py      #   长期记忆读写工具
 │   │   ├── tool_synthesizer.py #   ★ 运行时工具合成
@@ -110,11 +111,25 @@ SANDBOX_ROOT=./sandbox
 
 ### 3. 启动
 
+**一键启动（推荐）**
+
 ```bash
-# Chainlit 界面（推荐，ChatGPT 风格）
+# Linux / macOS / WSL
+./run.sh          # 自动装依赖 → 启动 Streamlit
+./run.sh cli      # 命令行模式
+
+# Windows
+run.bat           # 双击启动
+run.bat cli       # 命令行模式
+```
+
+**手动启动**
+
+```bash
+# Chainlit 界面（ChatGPT 风格）
 chainlit run chainlit_app.py --watch
 
-# 原 Streamlit 界面
+# Streamlit 界面
 streamlit run ui/app.py
 
 # 命令行模式
@@ -170,7 +185,7 @@ class MyTool:
 
 ---
 
-### 二、工具集（9 个）
+### 二、工具集（11 个）
 
 #### 2.1 安全计算器（calculator）
 
@@ -180,11 +195,15 @@ class MyTool:
 
 调用 Wikipedia REST API，先搜索最佳匹配标题，再获取文章摘要，截断到 1200 字符。使用 `urllib`（Python 标准库），**零外部依赖**。支持中文（`zh`）和其他语言版本。
 
-#### 2.3 沙箱文件系统（local_filesystem）
+#### 2.3 全网搜索 + 网页抓取（web_search / web_fetch）
 
-支持 `read` / `write` / `list` 三种操作。安全策略：通过 `Path.resolve()` + `startswith()` 双重校验，确保所有路径操作都被限制在沙箱根目录内，无法通过 `../` 等路径穿越逃逸。
+基于 DuckDuckGo Lite 的全网搜索工具，**零外部依赖，无需 API Key**。返回标题、摘要、URL，最多 10 条。`web_fetch` 配套抓取任意 URL 全文并自动剥离 HTML 标签（最大 8000 字符），让 Agent 能获取最新信息、新闻、文档等 Wikipedia 之外的内容。
 
-#### 2.4 代码解释器（code_interpreter）
+#### 2.4 本地文件系统（local_filesystem）
+
+支持 `read` / `write` / `list` 等操作，默认无沙箱路径限制，可自由访问任意目录。
+
+#### 2.6 代码解释器（code_interpreter）
 
 LLM 编写 Python 代码，框架在 **独立子进程** 中执行，结果通过标准输出返回。关键设计：
 - 临时文件写入沙箱目录，执行后立即删除
@@ -194,19 +213,15 @@ LLM 编写 Python 代码，框架在 **独立子进程** 中执行，结果通�
 
 这让 Agent 具备了完整的「写代码 → 运行 → 看结果」能力。
 
-#### 2.5 数据可视化（visualize）
+#### 2.7 数据可视化（visualize）
 
-接收结构化数据，生成基于 **Chart.js** 的自包含 HTML 图表文件，渲染到对话界面。支持 6 种图表类型（bar / line / pie / doughnut / radar / scatter），颜色方案内置 8 色循环。
+接收结构化数据，生成基于 **Chart.js** 的自包含 HTML 图表文件，渲染到对话界面。支持 6 种图表类型。Agent 通过 `local_filesystem` 或 `code_interpreter` 写出的 HTML 图表也会被自动检测并内联渲染。
 
-**触发机制**：系统提示词中注入了图表选择规则，当数据涉及比较、趋势、比例、分布（≥3个数据点）时，Agent **自主决定** 是否调用可视化——不需要用户明确要求。
+#### 2.8 多视角辩论（perspective_debate）
 
-#### 2.6 多视角辩论（perspective_debate）
+对有争议的问题，发起两次 LLM 调用，分别让"正方"和"反方"以各自立场论辩，最多 2 轮交叉辩论。Agent 综合辩论结果给出平衡结论。
 
-对有争议的问题，框架发起两次 LLM 调用，分别让"正方"和"反方"以各自立场论辩，最多支持 2 轮交叉辩论（第 2 轮包含对对方上轮论点的反驳）。Agent 综合辩论结果给出平衡结论。
-
-**触发机制**：与可视化类似，系统提示词内嵌了触发规则——凡涉及伦理争议、预测类、开放式问题，Agent 会主动调用辩论工具。
-
-#### 2.7 长期记忆工具（memory_store / memory_recall）
+#### 2.9 长期记忆工具（memory_store / memory_recall）
 
 允许 Agent 在对话中主动存储和检索长期事实。这两个工具需要注入 `LongTermMemory` 和 LLM 客户端实例，因此在 `agent.py` 中通过依赖注入注册，而不是在 `__init__.py` 里静态注册。
 

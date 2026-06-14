@@ -19,13 +19,11 @@ class CodeInterpreterTool:
     name = "code_interpreter"
     description = (
         "Execute a Python code snippet and return its output. "
-        "The LLM should WRITE Python code to solve the user's problem, "
-        "then call this tool to run it. "
-        "Use print() to output results. "
-        "The sandbox working directory is set to the project sandbox folder, "
-        "so files written by local_filesystem can be read here directly. "
-        "Timeout: 15 seconds. Available: Python standard library + "
-        "any packages already installed in the current environment."
+        "Write Python code to solve problems, then call this tool to run it. "
+        "Use print() to output results. The working directory is the current "
+        "directory shown in the sidebar; use os.getcwd() to check. "
+        "Timeout: 15 seconds (max 30). Python standard library + "
+        "any packages installed in the current environment are available."
     )
     parameters = {
         "type": "object",

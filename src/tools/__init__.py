@@ -7,6 +7,7 @@ from .local_filesystem import LocalFileSystemTool
 from .code_interpreter import CodeInterpreterTool
 from .visualizer import VisualizerTool
 from .tool_synthesizer import ToolSynthesizerTool
+from .web_search import WebSearchTool, WebFetchTool
 
 
 def register_all_tools(sandbox_root: str | None = None, registry=None) -> ToolRegistry:
@@ -14,6 +15,8 @@ def register_all_tools(sandbox_root: str | None = None, registry=None) -> ToolRe
     reg.register_many([
         CalculatorTool(),
         WikipediaSearchTool(),
+        WebSearchTool(),
+        WebFetchTool(),
         LocalFileSystemTool(sandbox_root=sandbox_root),
         CodeInterpreterTool(sandbox_root=sandbox_root),
         VisualizerTool(sandbox_root=sandbox_root),

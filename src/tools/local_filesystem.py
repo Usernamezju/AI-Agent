@@ -8,10 +8,11 @@ from pathlib import Path
 class LocalFileSystemTool:
     name = "local_filesystem"
     description = (
-        "Manage files inside the sandbox directory. "
+        "Read, write, list, and manage files on the local filesystem. "
         "Operations: read, write, append, list, delete, move, mkdir. "
-        "All paths are relative to the sandbox root. "
-        "NOTE: This tool only accesses the sandbox folder, NOT the project source code."
+        "Supports both absolute paths (e.g. C:\\Users\\... on Windows, /home/... on Linux) "
+        "and relative paths. Use this tool whenever the user asks you to access, "
+        "read, or summarize files on their computer."
     )
     parameters = {
         "type": "object",
@@ -82,10 +83,7 @@ class LocalFileSystemTool:
     # ------------------------------------------------------------------
     def _resolve(self, rel_path: str) -> Path:
         clean = rel_path.lstrip("/").lstrip("\\") or "."
-        target = (self._root / clean).resolve()
-        if str(target) != str(self._root) and not str(target).startswith(str(self._root) + os.sep):
-            raise PermissionError(f"Access denied: '{rel_path}' escapes the sandbox.")
-        return target
+        return (self._root / clean).resolve()
 
     def _read(self, path: str) -> str:
         try:

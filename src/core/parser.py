@@ -60,14 +60,16 @@ def _extract_action_input(text: str) -> dict | None:
         except json.JSONDecodeError: pass
 
     # Strategy 2: bare JSON on same/next lines
-    m = re.search(r"Action\s*Input\s*[:：]\s*(\{.*?\})\s*(?:Action|Final\s+Answer|Thought|$)",
+    # Observation is included in lookahead so that LLM-generated fake "Observation:" lines
+    # don't get absorbed into the JSON match.
+    m = re.search(r"Action\s*Input\s*[:：]\s*(\{.*?\})\s*(?:Action|Final\s+Answer|Thought|Observation|$)",
                   text, re.IGNORECASE | re.DOTALL)
     if m:
         try: return json.loads(m.group(1))
         except json.JSONDecodeError: pass
 
     # Fallback: grab raw text, strip fences, try parse
-    m = re.search(r"Action\s*Input\s*[:：]\s*(.*?)(?=\n\s*(?:Action|Final\s+Answer|Thought)[:：]|$)",
+    m = re.search(r"Action\s*Input\s*[:：]\s*(.*?)(?=\n\s*(?:Action|Final\s+Answer|Thought|Observation)[:：]|$)",
                   text, re.IGNORECASE | re.DOTALL)
     if m:
         candidate = re.sub(r"^```(?:json)?\s*", "", m.group(1).strip())
