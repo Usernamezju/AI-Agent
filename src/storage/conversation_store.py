@@ -45,9 +45,10 @@ class ConversationStore:
         conv["messages"].append({"role": role, "content": content})
         conv["updated_at"] = datetime.now(timezone.utc).isoformat()
 
-        # Auto-title: first user message (max 20 chars)
-        if not conv.get("title") and role == "user":
-            conv["title"] = content[:20]
+        # Auto-title: first user message (max 20 chars, strip newlines)
+        if role == "user" and not conv.get("title"):
+            clean = content.strip().replace("\n", " ")
+            conv["title"] = clean[:20] + ("…" if len(content) > 20 else "")
 
         self._save(conv)
 

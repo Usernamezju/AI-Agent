@@ -170,6 +170,7 @@ with st.sidebar:
                     conv = agent_obj._store.get_conversation(r["id"])
                     if conv:
                         st.session_state.messages = conv.get("messages", [])
+                        agent_obj._current_conv_id = r["id"]
                         st.rerun()
     else:
         # ---- Conversation history list ----
@@ -212,10 +213,14 @@ with st.sidebar:
                             conv = agent_obj._store.get_conversation(c["id"])
                             if conv:
                                 st.session_state.messages = conv.get("messages", [])
+                                agent_obj._current_conv_id = c["id"]
                                 st.rerun()
                     with col_b:
                         if st.button("🗑", key=f"del_{c['id']}", use_container_width=True):
                             agent_obj._store.delete_conversation(c["id"])
+                            if agent_obj._current_conv_id == c["id"]:
+                                agent_obj._current_conv_id = None
+                                st.session_state.messages = []
                             st.rerun()
 
     st.sidebar.divider()
@@ -232,11 +237,14 @@ with st.sidebar:
         _handle_upload(uploaded_file, sidebar_agent)
         st.rerun()
 
+# ---- chat_input at top level (must be outside any container) ----
+query = st.chat_input("输入任务…")
+
 # ---- Layout ---------------------------------------------------------
 left, right = st.columns([3, 2])
 
 # =====================================================================
-# LEFT — Chat panel
+# LEFT — Chat panel (history only, no input)
 # =====================================================================
 with left:
     st.title("🤖 AI Agent Framework")
@@ -245,64 +253,6 @@ with left:
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
-
-    # Input
-    query = st.chat_input("输入任务…")
-    if query:
-        st.session_state.messages.append({"role": "user", "content": query})
-        st.session_state.trace = []
-        st.session_state.ma_tasks = []
-        st.session_state.ma_trace = []
-
-        if st.session_state.multi_agent_mode:
-            # ---- Multi-agent path ----
-            orch: Orchestrator = st.session_state.orchestrator
-            with st.chat_message("assistant"):
-                placeholder = st.empty()
-                placeholder.markdown("⏳ *多智能体规划中...*")
-
-                events = []
-                final_answer = ""
-                for event in orch.run_stream(query):
-                    events.append(event)
-                    if event["type"] == "plan":
-                        st.session_state.ma_tasks = event["tasks"]
-                        placeholder.markdown("⏳ *任务规划完成，执行子任务中...*")
-                    elif event["type"] == "task_start":
-                        # Update task status in the cached plan
-                        for t in st.session_state.ma_tasks:
-                            if t["id"] == event["task_id"]:
-                                t["status"] = "running"
-                    elif event["type"] == "task_done":
-                        # Update task status in the cached plan
-                        for t in st.session_state.ma_tasks:
-                            if t["id"] == event["task_id"]:
-                                t["status"] = event["status"]
-                        st.session_state.ma_trace.append(event)
-                    elif event["type"] == "finished":
-                        final_answer = event.get("answer", "")
-                st.session_state.ma_trace = events
-                placeholder.markdown(final_answer or "No result.")
-
-            st.session_state.messages.append({"role": "assistant", "content": final_answer})
-        else:
-            # ---- Single-agent path ----
-            agent: Agent = st.session_state.agent
-            with st.chat_message("assistant"):
-                placeholder = st.empty()
-                placeholder.markdown("⏳ *Thinking...*")
-
-                steps = list(agent.run_stream(query))
-                st.session_state.trace = steps
-
-                final = next((s["answer"] for s in steps if s["type"] == "finished"), None)
-                if final is None:
-                    final = next((s["message"] for s in steps if s["type"] == "error"), "No result.")
-                placeholder.markdown(final)
-
-            st.session_state.messages.append({"role": "assistant", "content": final})
-
-        st.rerun()
 
 # =====================================================================
 # RIGHT — Sidebar panels
@@ -470,3 +420,61 @@ with right:
                     if st.button("取消", key="confirm_clear_no", use_container_width=True):
                         st.session_state["confirm_clear"] = False
                         st.rerun()
+
+# =====================================================================
+# Query handling (top-level, after all containers)
+# =====================================================================
+if query:
+    st.session_state.messages.append({"role": "user", "content": query})
+    st.session_state.trace = []
+    st.session_state.ma_tasks = []
+    st.session_state.ma_trace = []
+
+    if st.session_state.multi_agent_mode:
+        # ---- Multi-agent path ----
+        orch: Orchestrator = st.session_state.orchestrator
+        with st.chat_message("assistant"):
+            placeholder = st.empty()
+            placeholder.markdown("⏳ *多智能体规划中...*")
+
+            events = []
+            final_answer = ""
+            for event in orch.run_stream(query):
+                events.append(event)
+                if event["type"] == "plan":
+                    st.session_state.ma_tasks = event["tasks"]
+                    placeholder.markdown("⏳ *任务规划完成，执行子任务中...*")
+                elif event["type"] == "task_start":
+                    for t in st.session_state.ma_tasks:
+                        if t["id"] == event["task_id"]:
+                            t["status"] = "running"
+                elif event["type"] == "task_done":
+                    for t in st.session_state.ma_tasks:
+                        if t["id"] == event["task_id"]:
+                            t["status"] = event["status"]
+                    st.session_state.ma_trace.append(event)
+                elif event["type"] == "finished":
+                    final_answer = event.get("answer", "")
+            st.session_state.ma_trace = events
+            st.session_state.trace = events
+            placeholder.markdown(final_answer or "No result.")
+
+        st.session_state.messages.append({"role": "assistant", "content": final_answer})
+    else:
+        # ---- Single-agent path ----
+        agent: Agent = st.session_state.agent
+        with st.chat_message("assistant"):
+            placeholder = st.empty()
+            placeholder.markdown("⏳ *Thinking...*")
+
+            steps = list(agent.run_stream(query))
+            st.session_state.trace = steps
+
+            final = next((s["answer"] for s in steps if s["type"] == "finished"), None)
+            if final is None:
+                final = next((s["message"] for s in steps if s["type"] == "error"), "No result.")
+            placeholder.markdown(final)
+
+        st.session_state.messages.append({"role": "assistant", "content": final})
+
+    st.rerun()
