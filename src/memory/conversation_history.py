@@ -24,7 +24,7 @@ class ConversationHistory:
         self._llm = llm_client
         self._summary: str = ""               # LLM-compressed digest of oldest turns
         self._recent_turns: list[tuple[str, str]] = []  # (user_query, final_answer)
-        self._token_budget = token_budget if token_budget is not None else int(settings.MAX_CONTEXT_TOKENS * 0.25)
+        self._token_budget = token_budget if token_budget is not None else int(settings.MAX_CONTEXT_TOKENS * 0.5)
 
     # ------------------------------------------------------------------
     def add_turn(self, user_query: str, final_answer: str) -> None:

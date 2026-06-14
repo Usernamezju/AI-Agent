@@ -4,13 +4,13 @@
 
 # ---- ReAct loop ----
 react:
-  max_iterations: 15              # max reasoning rounds per query
+  max_iterations: 50              # max reasoning rounds per query
   sliding_window_size: 10         # recent rounds kept in context window
   max_context_tokens: 8000        # context token budget before truncation
 
 # ---- Conversation history compression ----
 conversation_history:
-  token_budget_ratio: 0.25        # fraction of max_context_tokens for conv history
+  token_budget_ratio: 0.5         # fraction of max_context_tokens for conv history
   chars_per_token_estimate: 3     # conservative: 3 chars ≈ 1 token (CJK + EN)
   max_compression_rounds: 5       # max recent turns kept verbatim (min 1)
   oldest_fraction_to_compress: 0.5 # fraction of oldest turns compressed at once

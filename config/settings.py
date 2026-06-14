@@ -51,7 +51,7 @@ class Settings:
     QWEN_VISION_MODEL      = os.getenv("QWEN_VISION_MODEL", _get("llm.qwen_vision.model", "qwen-vl-plus"))
 
     # ---- ReAct loop ----
-    MAX_ITERATIONS         = int(os.getenv("MAX_ITERATIONS", _get("agent.react.max_iterations", 15)))
+    MAX_ITERATIONS         = int(os.getenv("MAX_ITERATIONS", _get("agent.react.max_iterations", 50)))
     TEMPERATURE            = float(os.getenv("TEMPERATURE", _get("llm.generation.temperature", 0.7)))
     MAX_TOKENS             = int(os.getenv("MAX_TOKENS", _get("llm.generation.max_tokens", 4096)))
 

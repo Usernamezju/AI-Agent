@@ -2,5 +2,9 @@
   "/mnt/f/人工智能基础实验作业/final": {
     "memory": "/mnt/f/人工智能基础实验作业/final 用于可视化浙江大学在湖北省近5年（2020-2024）录取分数线，已生成 zju_hubei_scores.html。用户请求查看 agent.py 文件（尚未完成读取），该文件可能为项目核心脚本。目录包含 .chainlit、.claude、.git 等配置目录及 .env、CLAUDE.md、README.md 等文件。下次可复用 HTML 结构对比其他高校或省份，并关注 agent.py 的具体功能。",
     "updated_at": "2026-06-14T07:58:44.372415+00:00"
+  },
+  "/mnt/f": {
+    "memory": "/mnt/f 为数据盘根目录，含约65个文件夹和38个文件。主要存储AI学习资料（实验报告、PDF论文、Python脚本）、智能车竞赛文档、电子工程训练资料、小说及系统安装包。重要文件包括：实验1-3 AI/机器学习文档、智能车比赛规则PDF、Notion图片下载器、probe_api.py。用户已执行列表操作，未修改。注意隐藏目录.claude和.GamingRoot。",
+    "updated_at": "2026-06-14T08:10:30.479830+00:00"
   }
 }

@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+  body { margin: 0; background: transparent; display: flex;
+          justify-content: center; align-items: center; height: 100vh; }
+  canvas { max-width: 100%; }
+</style>
+</head>
+<body>
+<canvas id="chart"></canvas>
+<script>
+  new Chart(document.getElementById('chart'), {"type": "pie", "data": {"labels": ["文件夹", "文件"], "datasets": [{"label": "数量", "data": [65, 38], "backgroundColor": ["rgba(99,102,241,0.8)", "rgba(16,185,129,0.8)"], "borderColor": "rgba(99,102,241,1)", "borderWidth": 2}]}, "options": {"responsive": true, "plugins": {"title": {"display": true, "text": "当前目录条目类型分布（文件 vs 文件夹）", "font": {"size": 16}}, "legend": {"position": "bottom"}}}});
+</script>
+</body>
+</html>

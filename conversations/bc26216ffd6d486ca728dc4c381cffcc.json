@@ -1,0 +1,16 @@
+{
+  "id": "bc26216ffd6d486ca728dc4c381cffcc",
+  "title": "你好",
+  "created_at": "2026-06-14T08:23:01.176754+00:00",
+  "updated_at": "2026-06-14T08:23:06.438120+00:00",
+  "messages": [
+    {
+      "role": "user",
+      "content": "你好"
+    },
+    {
+      "role": "assistant",
+      "content": "你好！我是你的智能助手。请问有什么可以帮你的？"
+    }
+  ]
+}
